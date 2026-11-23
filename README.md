@@ -10,7 +10,7 @@ Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyfa
 
 *Audra's Mixer, editing the headphones' mix. Every picture here is Audra's simulated device with a small studio set up.*
 
-**▶ [Watch the one-minute tour on YouTube](https://youtu.be/bmi1uvr0dZ8)**
+**▶ [Watch the one-minute tour on YouTube](https://youtu.be/phW8Z627bA8)**
 
 ## Early preview
 
