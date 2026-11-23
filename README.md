@@ -10,7 +10,7 @@ Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyfa
 
 *Quick setup, one press for a podcast, then the Mixer: levels glide and the meters move. Every picture here is Audra's simulated device with a small studio set up.*
 
-**▶ [Watch the one-minute tour on YouTube](https://youtu.be/pckCgA68kao)**
+**▶ [Watch the one-minute tour on YouTube](https://youtu.be/pckCgA68koo)**
 
 ## Early preview
 
