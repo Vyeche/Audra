@@ -6,9 +6,9 @@ Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyfa
 
 > Not affiliated with RME. *TotalMix*, *TotalMix FX*, *Babyface Pro* and *Babyface Pro FS* are trademarks of RME Intelligent Audio Solutions.
 
-![Audra's Mixer, editing the headphone mix: the vocal, room mic and guitar that feed it stand in the warm light](docs/images/mixer-phones.png)
+![Audra in motion: Quick setup, one press sets up a podcast, its card shows what changed, then the Mixer's levels glide and the meters move](docs/images/tour.gif)
 
-*Audra's Mixer, editing the headphones' mix. Every picture here is Audra's simulated device with a small studio set up.*
+*Quick setup, one press for a podcast, then the Mixer: levels glide and the meters move. Every picture here is Audra's simulated device with a small studio set up.*
 
 **▶ [Watch the one-minute tour on YouTube](https://youtu.be/phW8Z627bA8)**
 
