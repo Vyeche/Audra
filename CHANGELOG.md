@@ -5,7 +5,7 @@
 Fixes and small helpers after the first preview.
 
 - **Copy these details for a bug report** (Help → About): the version, the device, the kernel, the system and the driver on the clipboard, ready for the issue form. Nothing personal goes in.
-- **Fixed:** closing Audra while it drove the unit over USB directly (no kernel driver loaded) could crash it on the way out. The same fix as TuxMix's (#56).
+- **Fixed:** closing Audra while it drove the unit over USB directly (no kernel driver loaded) could crash it on the way out. The same fix as TuxMix's (ismail-bahloul/TuxMix#56).
 - Libraries updated (log, rand, strum, alsa, rfd); the gauntlet now also runs HOL Guard's repository scan and checks the workflows themselves.
 
 ## 0.1.0 — early preview (2026-11-23, v0.1.0-preview)
