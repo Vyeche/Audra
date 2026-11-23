@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 — early preview (2026-11-23)
+
+Security and safety fixes from a two-reviewer audit of everything that takes input from outside: files you open, OSC, MIDI, the control socket, the USB connection, and the build and release pipeline.
+
+- **Files you open** (snapshots, workspaces, presets, themes) can't change what an input is, push a preamp or EQ past the panel's range, switch LOOP on, change the clock, or crash Audra with a malformed mix. A recall that leaves LOOP off says so.
+- **OSC, MIDI and Mackie control** can't switch 48V or LOOP on by themselves (they wait for your own presses), and many small raises glide up like one big one instead of adding up to a loud jump. An OSC message for a channel the unit hasn't got is ignored instead of crashing Audra.
+- **Safer by default:** private per-user folders instead of shared `/tmp` names; channel names can't add PipeWire settings; files over 16 MB aren't read; the USB connection no longer frees memory still in use after a fault.
+- **Release pipeline:** the public copy and the packages are checked for personal data and secrets, and stop if any turns up. GitHub's CodeQL scanning is on.
+
 ## 0.1.1 — early preview (2026-11-23)
 
 Fixes and small helpers after the first preview.

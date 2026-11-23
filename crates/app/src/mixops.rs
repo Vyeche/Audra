@@ -34,6 +34,21 @@ pub enum MixClip {
 /// A mirror: output pair `to` follows output pair `from`'s submix.
 pub type Mirror = (usize, usize);
 
+/// Mirrors kept to pairs the device has and to one level (a target is never
+/// a source), as `mirror` makes them: from prefs or from a workspace file,
+/// whose list could hold anything (the security review).
+pub(crate) fn sane_mirrors(state: &TuxMix, mirrors: &[Mirror]) -> Vec<Mirror> {
+    let pairs = state.device.output_pair_count();
+    let targets: Vec<usize> = mirrors.iter().map(|&(_, t)| t).collect();
+    let mut kept: Vec<Mirror> = Vec::new();
+    for &(f, t) in mirrors {
+        if f < pairs && t < pairs && f != t && !targets.contains(&f) && !kept.iter().any(|&(_, kt)| kt == t) {
+            kept.push((f, t));
+        }
+    }
+    kept
+}
+
 /// Every source channel: inputs, then playbacks.
 fn sources(state: &TuxMix) -> Vec<ChannelId> {
     (0..state.device.inputs().len())

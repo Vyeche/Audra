@@ -16,12 +16,12 @@ MB=$(git merge-base "$BASE" HEAD 2>/dev/null) || { echo "safety: can't find the 
 
 # The files that decide what plays where. Keep in step with
 # docs/gauntlet-plan.md and CONTRIBUTING.md.
-SAFETY_RE='^(crates/app/src/(fx|hearfix|control_room|setups|quick|recorder|dynamics_loop|dynamics_panel|resetmix|assist)\.rs|crates/app/src/control_room/|crates/tuxmix-core/|crates/tuxmix-usb/|driver/)'
+SAFETY_RE='^(crates/app/src/(fx|hearfix|control_room|setups|quick|recorder|dynamics_loop|dynamics_panel|resetmix|assist|workspaces|scenes|mic_presets|eq_presets|mixops|osc|midi|mackie|control)\.rs|crates/app/src/control_room/|crates/tuxmix-core/|crates/tuxmix-usb/|driver/)'
 
 changed=$(git diff --name-only "$MB" HEAD)
 # The stream and Voice routing live in app.rs among much else: there, the
 # functions that move levels for the speakers or the stream count.
-app_safety=$(git diff -U0 "$MB" HEAD -- crates/app/src/app.rs | grep -E '^[-+].*(set_level_gently|voice_off_keeps_the_stream|plain_mic_looped|stream_takes_voice|input_looped|apply_mix_scene|set_volume\(|set_mute\(|set_solo\(|phantom|fx_return|set_fx_)' | head -1)
+app_safety=$(git diff -U0 "$MB" HEAD -- crates/app/src/app.rs | grep -E '^[-+].*(set_level_gently|set_remote_level|fader_glides|step_fader_glides|capped_share|gain_ramps|remote_rise|remote_gain_rise|set_input_gain|set_loopback|OscCommand|voice_off_keeps_the_stream|plain_mic_looped|stream_takes_voice|input_looped|apply_mix_scene|set_volume\(|set_mute\(|set_solo\(|phantom|fx_return|set_fx_)' | head -1)
 
 touched=$(printf '%s\n' "$changed" | grep -E "$SAFETY_RE" || true)
 [ -n "$app_safety" ] && touched=$(printf '%s\ncrates/app/src/app.rs (levels, the stream or Voice)\n' "$touched" | sed '/^$/d')

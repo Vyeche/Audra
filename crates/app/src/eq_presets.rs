@@ -208,7 +208,7 @@ pub fn write_file(path: &std::path::Path, preset: &EqPreset) -> Result<(), Strin
 /// Reads an Audra EQ preset file. A file of another kind, or a later
 /// format version, is refused with the reason.
 pub fn read_file(path: &std::path::Path) -> Result<EqPreset, String> {
-    let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let json = crate::prefs::read_capped(path).map_err(|e| e.to_string())?;
     let file: PresetFile =
         serde_json::from_str(&json).map_err(|_| "not an Audra EQ preset file".to_string())?;
     if file.audra_eq_preset > FILE_VERSION {

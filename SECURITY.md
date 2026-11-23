@@ -3,7 +3,7 @@
 Audra is a local mixer app with a kernel driver. It makes no internet connections and sends nothing anywhere. What it does have:
 
 - **A kernel driver** (`driver/`, `snd-usb-babyface-pro`), which runs with full rights inside Linux. A bug there can crash the machine. Reports about it are the most important kind.
-- **Optional local controls**, all off unless you switch them on: the automation socket (`--control`, a Unix socket only your own user can reach), the OSC control surface (it listens on this computer only, 127.0.0.1), and MIDI.
+- **Optional local controls**, all off unless you switch them on: the automation socket (`--control`, a Unix socket only your own user can reach), the OSC control surface (it listens on this computer only, 127.0.0.1, but every user and program on this computer can reach it while it's on; it can move levels, which glide up rather than jump, however many messages arrive, and it can never switch 48V or LOOP on by itself: those wait for your own presses), and MIDI (any program on the ALSA sequencer can send to Audra's port while MIDI is on).
 - **Files it reads**: its settings, snapshots, workspaces, presets and colour themes (JSON). A crafted file that crashes or freezes Audra is worth reporting.
 - **Sound safety**: anything that can make Audra play a sudden loud sound, or send an open microphone to the speakers without saying so, is treated as a security issue too.
 

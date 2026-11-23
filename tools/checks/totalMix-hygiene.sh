@@ -11,7 +11,9 @@ BASE=${1:-origin/main}
 MB=$(git merge-base "$BASE" HEAD 2>/dev/null) || { echo "hygiene: can't find the base $BASE" >&2; exit 2; }
 fail=0
 
-added=$(git diff --name-only --diff-filter=AM "$MB" HEAD)
+# Names as they are, not quoted (git quotes non-ASCII names by default,
+# and a quoted name fails every test below).
+added=$(git -c core.quotepath=off diff --name-only --diff-filter=AM "$MB" HEAD)
 
 # 1. Internal files: publish/drop-list.txt in the working repo,
 # .github/internal-paths.txt in the public copy. The files the public copy
@@ -38,21 +40,23 @@ if [ -f "$DROP" ]; then
         done)
         if [ -n "$hit" ]; then
             echo "hygiene: an internal file ($DROP: $pat):" >&2
-            printf '  %s\n' $hit >&2
+            printf '%s\n' "$hit" | sed 's/^/  /' >&2
             fail=1
         fi
     done < "$DROP"
 fi
 
 # 2. Big files.
-for f in $added; do
-    [ -f "$f" ] || continue
+while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
     size=$(stat -c %s "$f")
     if [ "$size" -gt 5242880 ]; then
         echo "hygiene: $f is $((size / 1048576)) MB (over 5 MB)" >&2
         fail=1
     fi
-done
+done <<EOF_ADDED
+$added
+EOF_ADDED
 
 # 3. Secrets in the added lines: private keys, common token shapes,
 # passwords written into URLs.

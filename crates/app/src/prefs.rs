@@ -305,6 +305,27 @@ pub struct Prefs {
 /// own file, so a test run never writes the real unit's settings (the
 /// harden review: a simulated Dim level came back on the real Main at the
 /// next start).
+/// The most a file Audra opens may hold (a workspace, a snapshot, a
+/// preset, a theme). Real ones are a few hundred KB at most; a picked file
+/// that someone sent could be anything, and is read whole.
+pub(crate) const FILE_CAP: u64 = 16 * 1024 * 1024;
+
+/// `read_to_string`, refusing a file over `FILE_CAP` before reading it.
+pub(crate) fn read_capped(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let f = std::fs::File::open(path)?;
+    if f.metadata()?.len() > FILE_CAP {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the file is too big to be one of Audra's"));
+    }
+    let mut text = String::new();
+    // `take` too: a file that grows while it's read stops at the cap.
+    f.take(FILE_CAP + 1).read_to_string(&mut text)?;
+    if text.len() as u64 > FILE_CAP {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the file is too big to be one of Audra's"));
+    }
+    Ok(text)
+}
+
 pub fn path_for(mock: bool) -> Option<PathBuf> {
     let p = path()?;
     Some(if mock { p.with_file_name("gui-mock.json") } else { p })

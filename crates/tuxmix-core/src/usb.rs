@@ -243,6 +243,25 @@ pub fn preamp_state_from_readback(st: [u8; 4]) -> (bool, bool, bool, bool) {
 }
 
 impl BabyfaceProUsb {
+    /// An error, not a panic, for a channel (and submix) this unit hasn't
+    /// got: the setters below index their tables directly, and a remote
+    /// (OSC, a workspace file) can name any number.
+    fn in_range(&self, channel: ChannelId, output: Option<usize>) -> Result<(), Error> {
+        let (ok, subs) = match channel {
+            ChannelId::Input(i) => (i < self.inputs.len(), self.inputs.get(i).map_or(0, |c| c.volumes.len().min(c.pans.len()))),
+            ChannelId::Playback(c) => (c < self.playbacks.len(), self.playbacks.get(c).map_or(0, |c| c.volumes.len().min(c.pans.len()))),
+            ChannelId::Output(o) => (o < self.outputs.len(), usize::MAX),
+        };
+        if !ok || output.is_some_and(|o| o >= subs) {
+            return Err(Error::InvalidChannel(format!("{channel:?} (submix {output:?})")));
+        }
+        Ok(())
+    }
+
+    fn input_in_range(&self, idx: usize) -> Result<(), Error> {
+        self.in_range(ChannelId::Input(idx), None)
+    }
+
     /// Discover and open the Babyface Pro FS on the USB bus.
     pub fn open() -> Result<Self, Error> {
         let dev = BabyfaceUsb::open()?;
@@ -602,6 +621,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_volume(&mut self, channel: ChannelId, output: usize, volume: f32) -> Result<(), Error> {
+        self.in_range(channel, Some(output))?;
         // A level that isn't a number is silence, never the top (job 8).
         let volume = crate::channel::safe_volume(volume);
         if let ChannelId::Output(o) = channel {
@@ -665,6 +685,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn volume(&self, channel: ChannelId, output: usize) -> Result<f32, Error> {
+        self.in_range(channel, Some(output))?;
         match channel {
             ChannelId::Input(i) => Ok(self.inputs[i].volumes[output]),
             ChannelId::Playback(c) => Ok(self.playbacks[c].volumes[output]),
@@ -673,6 +694,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_pan(&mut self, channel: ChannelId, output: usize, pan: i8) -> Result<(), Error> {
+        self.in_range(channel, Some(output))?;
         let out = output_for(output)?;
         let balance = (pan.clamp(-100, 100) as f32) / 100.0;
         let (src, fixed_is_left) = match channel {
@@ -707,6 +729,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn pan(&self, channel: ChannelId, output: usize) -> Result<i8, Error> {
+        self.in_range(channel, Some(output))?;
         match channel {
             ChannelId::Input(i) => Ok(self.inputs[i].pans[output]),
             ChannelId::Playback(c) => Ok(self.playbacks[c].pans[output]),
@@ -715,6 +738,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_mute(&mut self, channel: ChannelId, mute: bool) -> Result<(), Error> {
+        self.in_range(channel, None)?;
         match channel {
             ChannelId::Output(o) => {
                 self.outputs[o].mute = mute;
@@ -779,6 +803,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn mute(&self, channel: ChannelId) -> Result<bool, Error> {
+        self.in_range(channel, None)?;
         match channel {
             ChannelId::Input(i) => Ok(self.inputs[i].mute),
             ChannelId::Playback(c) => Ok(self.playbacks[c].mute),
@@ -787,6 +812,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_solo(&mut self, channel: ChannelId, solo: bool) -> Result<(), Error> {
+        self.in_range(channel, None)?;
         // cap_solo2.pcap (2026-08-24): solo = MUTE-THE-OTHERS — the
         // soloed strip's AN1/2 low map goes to the "active" value
         // (0x2000 playbacks / 0x1000 linked inputs) and every OTHER
@@ -900,6 +926,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn solo(&self, channel: ChannelId) -> Result<bool, Error> {
+        self.in_range(channel, None)?;
         match channel {
             ChannelId::Input(i) => Ok(self.inputs[i].solo),
             ChannelId::Playback(c) => Ok(self.playbacks[c].solo),
@@ -908,6 +935,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_phantom(&mut self, idx: usize, on: bool) -> Result<(), Error> {
+        self.input_in_range(idx)?;
         if self.inputs[idx].channel_type != ChannelType::Mic {
             return Err(Error::InvalidChannel(format!(
                 "Input {idx} has no 48V phantom power"
@@ -918,6 +946,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_pad(&mut self, idx: usize, on: bool) -> Result<(), Error> {
+        self.input_in_range(idx)?;
         if self.inputs[idx].channel_type != ChannelType::Mic {
             return Err(Error::InvalidChannel(format!(
                 "Input {idx} has no pad switch"
@@ -928,6 +957,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_gain(&mut self, idx: usize, gain: u32) -> Result<(), Error> {
+        self.input_in_range(idx)?;
         if !matches!(
             self.inputs[idx].channel_type,
             ChannelType::Mic | ChannelType::Instrument
@@ -944,6 +974,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_sensitivity(&mut self, idx: usize, sensitivity: Sensitivity) -> Result<(), Error> {
+        self.input_in_range(idx)?;
         // Same hardware feature as `set_ref_level` (Instr 3/4's
         // +4dBu/-10dBV/Boost ref-level switch, cap_reflevel2.pcap,
         // 2026-08-24 — hardware-verified) under the higher-level enum
@@ -1047,6 +1078,7 @@ impl RmeDevice for BabyfaceProUsb {
     }
 
     fn set_phase(&mut self, idx: usize, invert: bool) -> Result<(), Error> {
+        self.input_in_range(idx)?;
         let src = input_source(idx)?;
         self.inputs[idx].phase = invert;
         // Negate (bitwise-NOT) the current fader value of EVERY output
@@ -1112,6 +1144,7 @@ impl RmeDevice for BabyfaceProUsb {
     // refuses it.
 
     fn set_ref_level(&mut self, idx: usize, raw: u16) -> Result<(), Error> {
+        self.input_in_range(idx)?;
         if self.inputs[idx].channel_type != ChannelType::Instrument {
             return Err(Error::InvalidChannel(format!(
                 "Input {idx} has no ref-level switch"
@@ -1219,6 +1252,7 @@ impl RmeDevice for BabyfaceProUsb {
         // Another number of channels would replace this unit's lists
         // (OpenCode's job 50: the quit's sync and USB's start came this way).
         scene.check_shape(self.inputs.len(), self.playbacks.len(), self.outputs.len())?;
+        scene.check_lists(&self.inputs, &self.playbacks)?;
         // Write every crosspoint (standard + low map), then the masters
         // and the preamp block — mirroring a TotalMix scene load. Each
         // through the scene's mutes and solos: they were never written,
@@ -1279,8 +1313,12 @@ impl RmeDevice for BabyfaceProUsb {
         Scene::safe_preamps(&mut inputs, &self.inputs);
         self.inputs = inputs;
         self.playbacks = scene.playbacks.clone();
-        self.outputs = scene.outputs.clone();
-        self.settings = scene.settings.clone();
+        let mut outputs = scene.outputs.clone();
+        Scene::safe_outputs(&mut outputs, &self.outputs);
+        self.outputs = outputs;
+        let mut settings = scene.settings.clone();
+        Scene::safe_settings(&mut settings, &self.settings);
+        self.settings = settings;
         // `gain_max` is a hardware property — re-derive it so a scene
         // saved by an older/gain-raw build (or a different model) can't
         // override the UI's gain range with a stale value.

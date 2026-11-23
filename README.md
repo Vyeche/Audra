@@ -68,7 +68,7 @@ More in the [wiki's tutorials](https://github.com/Vyeche/Audra/wiki/Tutorials).
 
 ## Status
 
-Early and personal: version 0.1.1, tested on one machine (Pop!_OS 24.04, kernel 7.2.6, one Babyface Pro FS).
+Early and personal: version 0.1.2, tested on one machine (Pop!_OS 24.04, kernel 7.2.6, one Babyface Pro FS).
 
 **Works:**
 - Quick setup, Mixer and Matrix views (the first launch opens Quick setup); one row open at a time on short windows, or two rows side by side. Quick is a guided setup in three steps: your mic (its preset and 48V), its level (a meter with a "speak here" band and the gain), and where you hear it, each ticking off when it's right. An optional fourth step, "Make your voice sound good", opens your mic's D panel with the Clear Calls preset set ("Not now" puts it away for good). A mic listens on the Phones by default; an open mic (48V on or a high gain) sent to the speakers is a warning, not a tick, since it can howl; the Now Mixing card says the same in any view, in one line that opens to "Take it out" (that one send, undoable) or "It's meant to be there" (remembered; Audra settings → App warns again). Quick's choice of where to listen is its own and doesn't change the Mixer's mix.

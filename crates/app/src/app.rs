@@ -2245,6 +2245,16 @@ pub struct TuxMix {
     /// Preamp gains on their way up after a mic preset raised them by more
     /// than `RAMP_OVER_DB`: input, from, to, since (`step_gain_ramps`).
     pub gain_ramps: HashMap<usize, (u32, u32, Instant)>,
+    /// How many dB a remote's (OSC, MIDI, Mackie) current burst has already
+    /// raised levels by at once, over every fader and mix together, and when
+    /// its last move came. Past `RAMP_OVER_DB` in one burst every further
+    /// rise glides; a quiet `REMOTE_BURST` starts a new burst. One budget
+    /// for all, since one message can move several levels (Trim Gains, a
+    /// linked pair, a group): counted per level, small steps on different
+    /// mixes added up (the security reviews).
+    pub remote_rise: (f32, Instant),
+    /// The same for a remote's preamp gain raises, in dB.
+    pub remote_gain_rise: (u32, Instant),
     /// Output levels on their way up after Recall (`step_level_ramps`):
     /// channel, from and to in dB, since.
     pub level_ramps: HashMap<usize, (f32, f32, Instant)>,
@@ -2316,6 +2326,9 @@ pub struct TuxMix {
     /// The last failure worth telling the user about (a device write that
     /// was refused), shown for `NOTICE_FOR`.
     pub notice: Option<(String, Instant)>,
+    /// The last recall's "LOOP stays off" sentence, for a caller that puts
+    /// up its own notice to carry on (`apply_mix_scene_from`).
+    pub loop_held_note: Option<String>,
     /// When the notice now showing says Undo takes it back: its time, so
     /// the notice carries an Undo key (the owner's pick after critique #40).
     /// Set by `say_undoable`; a later notice has another time.
@@ -3233,6 +3246,8 @@ pub fn new(mock: bool, osc_config: Option<OscConfig>, backend: Option<String>) -
         panel_anim: None,
         gain_flash: HashMap::new(),
         gain_ramps: HashMap::new(),
+        remote_rise: (0.0, Instant::now()),
+        remote_gain_rise: (0, Instant::now()),
         level_ramps: HashMap::new(),
         fader_glides: HashMap::new(),
         ramps_stepped_at: [None; 4],
@@ -3271,6 +3286,7 @@ pub fn new(mock: bool, osc_config: Option<OscConfig>, backend: Option<String>) -
         no_trim_outputs: Vec::new(),
         window_hidden: false,
         notice: None,
+        loop_held_note: None,
         notice_undo: None,
         notice_folder: None,
         undo_batch: false,
@@ -3582,6 +3598,10 @@ pub(crate) fn ramp_step_clock(state: &mut TuxMix, kind: RampKind, now: Instant, 
 /// but no more than `RAMP_STEP_MAX` past where it stood at the last step
 /// (`prev`), and the start to keep: moved on when the step was held back,
 /// so the next one measures from where the glide really is.
+/// The most one glide step may write over the level the fader has now:
+/// just under `RAMP_OVER_DB`, as `capped_share`'s 5.94 dB.
+const RAMP_STEP_DB: f32 = 5.94;
+
 pub(crate) fn capped_share(since: Instant, prev: Option<Instant>, now: Instant, over: Duration, span_db: f32) -> (f32, Instant) {
     let share = |at: Instant| (at.saturating_duration_since(since).as_secs_f32() / over.as_secs_f32()).clamp(0.0, 1.0);
     let by_time = share(now);
@@ -3697,6 +3717,7 @@ pub(crate) fn apply_mix_scene_from(state: &mut TuxMix, scene: &Scene, levels_bef
     // Another shape than the unit's is refused before anything is written
     // (OpenCode's job 40: its lists replaced the unit's channels).
     scene.check_shape(state.device.inputs().len(), state.device.playbacks().len(), state.device.outputs().len())?;
+    scene.check_lists(state.device.inputs(), state.device.playbacks())?;
     let before: Vec<Option<u32>> = state.device.inputs().iter().map(|c| c.gain).collect();
     let levels_before = levels_before.to_vec();
     // Every input's and playback's send to every mix, before.
@@ -3819,6 +3840,18 @@ pub(crate) fn apply_mix_scene_from(state: &mut TuxMix, scene: &Scene, levels_bef
     }
     for (idx, was, to) in gain_glides {
         state.gain_ramps.insert(idx, (was, to, now));
+    }
+    // LOOP never comes on from a recalled mix (`Scene::safe_outputs`): said,
+    // so a stream's or recording's mix doesn't go quiet unexplained (the
+    // second security review). A caller with a notice of its own adds the
+    // sentence to it (`loop_held_note`), so it isn't covered up. The clock
+    // isn't said: its names differ between drivers, and a kept clock is
+    // no hazard.
+    let held_loop = (0..state.device.output_pair_count())
+        .any(|p| scene.outputs.get(p * 2).is_some_and(|o| o.loopback) && !state.device.outputs().get(p * 2).is_some_and(|o| o.loopback));
+    state.loop_held_note = held_loop.then(|| "LOOP stays off: a recalled mix never switches it on. Press LOOP twice on the output to switch it on.".to_string());
+    if let Some(note) = &state.loop_held_note {
+        state.notice = Some((note.clone(), now));
     }
     Ok(())
 }
@@ -4065,6 +4098,57 @@ pub(crate) fn set_level_gently(state: &mut TuxMix, cid: ChannelId, out: usize, t
     }
 }
 
+/// How long a remote's burst counts on after its last move: a quiet
+/// second ends it.
+const REMOTE_BURST: Duration = Duration::from_secs(1);
+
+
+/// A remote's (OSC) level: as `set_level_gently`, and a rise of more than
+/// `RAMP_OVER_DB` over where its burst began glides too, so many small
+/// steps can't add up to a loud jump. While it glides a new target near
+/// the old one carries on the glide; a far one starts it again from where
+/// the level is now, so no write jumps.
+fn set_remote_level(state: &mut TuxMix, cid: ChannelId, out: usize, to: f32, via: GlideVia) {
+    let db = |v: f32| 20.0 * v.max(1e-6).log10();
+    let from = fader_level(state, cid, out);
+    let now = Instant::now();
+    if now.duration_since(state.remote_rise.1) > REMOTE_BURST {
+        state.remote_rise.0 = 0.0;
+    }
+    state.remote_rise.1 = now;
+    // A move down is never the hazard: it lands, and spends nothing.
+    if db(to) <= db(from) {
+        set_level_gently(state, cid, out, to, via);
+        return;
+    }
+    let rise = db(to) - db(from).max(-60.0);
+    if state.remote_rise.0 + rise > RAMP_OVER_DB as f32 {
+        if let Some(g) = state.fader_glides.get_mut(&(cid, out)) {
+            if g.via == via && db(to) >= g.to_db && db(to) - g.to_db <= RAMP_OVER_DB as f32 {
+                g.to = to;
+                g.to_db = db(to);
+                return;
+            }
+        }
+        stop_fader_glides(state, cid);
+        let glide = FaderGlide { from_db: db(from).max(-60.0), to_db: db(to), to, since: now, via };
+        state.fader_glides.insert((cid, out), glide);
+        return;
+    }
+    state.remote_rise.0 += rise;
+    set_level_gently(state, cid, out, to, via);
+}
+
+/// Adds the last recall's "LOOP stays off" sentence to the notice up now.
+pub(crate) fn add_loop_held_note(state: &mut TuxMix) {
+    if let (Some(note), Some((text, _))) = (state.loop_held_note.take(), state.notice.as_mut()) {
+        if !text.contains(&note) {
+            text.push(' ');
+            text.push_str(&note);
+        }
+    }
+}
+
 /// A ready-made setup's level (`setups`): as `set_level_gently`, a rise
 /// gliding up, but without stopping the strip's other glides, since one
 /// setup raises a strip in two mixes at once (the Phones and a recording
@@ -4177,7 +4261,28 @@ pub(crate) fn step_fader_glides(state: &mut TuxMix, now: Instant) {
         g.since = since;
         state.fader_glides.insert((cid, out), g);
         let db = g.from_db + (g.to_db - g.from_db) * t;
-        let v = if t >= 1.0 { g.to } else { 10f32.powf(db / 20.0) };
+        let mut v = if t >= 1.0 { g.to } else { 10f32.powf(db / 20.0) };
+        // Never more than RAMP_STEP_DB over what the fader has now, however
+        // the glide's target moved (the security review: a remote raised a
+        // glide's target 60 dB in one frame, and the next tick, the glide
+        // nearly done, wrote 58 dB at once). Capped, the glide starts again
+        // from the capped step towards the same target.
+        let now_db = 20.0 * fader_level(state, cid, out).max(1e-6).log10();
+        let wrote_db = 20.0 * v.max(1e-6).log10();
+        if wrote_db > now_db.max(-60.0) + RAMP_STEP_DB {
+            let capped = now_db.max(-60.0) + RAMP_STEP_DB;
+            v = 10f32.powf(capped / 20.0);
+            g.from_db = capped;
+            g.since = now;
+            state.fader_glides.insert((cid, out), g);
+            let via = match g.via {
+                GlideVia::Member if now_db <= -59.99 => GlideVia::Strip,
+                GlideVia::Grouped if now_db <= -59.99 => GlideVia::GroupedNoTrim,
+                via => via,
+            };
+            write_level(state, cid, out, v, via);
+            continue;
+        }
         // From silence, its steps hand no Trim Gains step on: a move from
         // -inf trims nothing when it's one write, so not when it glides
         // (the reviewer: the other mixes came up the whole glide).
@@ -4885,14 +4990,7 @@ pub fn apply_prefs(state: &mut TuxMix, prefs: crate::prefs::Prefs) {
     };
     // Mirrors, kept to pairs the device has and to one level (a target is
     // never a source), as `mixops::mirror` makes them.
-    let pairs = state.device.output_pair_count();
-    let targets: Vec<usize> = prefs.mirrors.iter().map(|&(_, t)| t).collect();
-    state.mirrors = prefs
-        .mirrors
-        .iter()
-        .copied()
-        .filter(|&(f, t)| f < pairs && t < pairs && f != t && !targets.contains(&f))
-        .collect();
+    state.mirrors = crate::mixops::sane_mirrors(state, &prefs.mirrors);
     state.eq_presets = crate::eq_presets::normalized_slots(prefs.eq_presets.clone());
     state.mic_presets = prefs.mic_presets.clone();
     state.startup_mic_preset = prefs.startup_mic_preset.clone();
@@ -5960,10 +6058,12 @@ fn solo_strip(state: &mut TuxMix, cid: ChannelId, s: bool) {
 }
 
 pub(crate) fn channel_is_muted(state: &TuxMix, cid: ChannelId) -> bool {
+    // `.get`, not `[]`: a channel the unit hasn't got reads as not muted
+    // (a malformed OSC packet once crashed Audra here on a locked mix).
     match cid {
-        ChannelId::Input(ch) => state.device.inputs()[ch].mute,
-        ChannelId::Playback(ch) => state.device.playbacks()[ch].mute,
-        ChannelId::Output(ch) => state.device.outputs()[ch].mute,
+        ChannelId::Input(ch) => state.device.inputs().get(ch).is_some_and(|c| c.mute),
+        ChannelId::Playback(ch) => state.device.playbacks().get(ch).is_some_and(|c| c.mute),
+        ChannelId::Output(ch) => state.device.outputs().get(ch).is_some_and(|c| c.mute),
     }
 }
 
@@ -6780,6 +6880,12 @@ fn flips_many(message: &Message) -> bool {
 const LOCKED_NOTICE: &str = "The mix is locked. Unlock it with the lock in the top bar.";
 
 pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
+    if let Message::OscCommand(cmd) = &message {
+        if !osc_in_range(state, cmd) {
+            log::warn!("OSC: dropped a command for a channel the unit hasn't got: {cmd:?}");
+            return Task::none();
+        }
+    }
     // What the mirrors were as this message arrived, for the undo step it
     // opens (a batch's inner messages keep the batch's).
     if !state.undo_batch {
@@ -8674,8 +8780,10 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 state.level_ramps.remove(&(ch ^ 1));
             }
             if state.from_remote {
-                // A remote's jump up glides; a small move or a drop lands.
-                set_level_gently(state, cid, out, tuxmix_core::channel::safe_volume(v), GlideVia::Grouped);
+                // A remote's jump up glides; a small move or a drop lands;
+                // and a burst of small raises glides too (MIDI and Mackie as
+                // OSC: the second security review).
+                set_remote_level(state, cid, out, tuxmix_core::channel::safe_volume(v), GlideVia::Grouped);
             } else {
                 stop_fader_glides(state, cid);
                 apply_grouped_volume(state, cid, out, v);
@@ -8996,6 +9104,7 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
             state.active_snapshot = None;
             state.my_setup_lit = true;
             say_undoable(state, "My setup is back.".to_string(), "Put the mix back as it was (Ctrl+Z)".to_string());
+            add_loop_held_note(state);
             // A stream that lost the voice, said last (critique #112 A P3-1 /
             // Fable A P2-1).
             say_stream_lost_voice(state, &voices, "My setup", "Undo (Ctrl+Z) puts it back.");
@@ -9192,7 +9301,7 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
             // A remote's level the gentle way: a jump up of more than
             // RAMP_OVER_DB glides, as a click's does; a fader's small moves
             // land at once (OpenCode's job 9: a jump landed in one step).
-            OscCommand::Volume(cid, out, v) => set_level_gently(state, cid, out, tuxmix_core::channel::safe_volume(v), GlideVia::Grouped),
+            OscCommand::Volume(cid, out, v) => set_remote_level(state, cid, out, tuxmix_core::channel::safe_volume(v), GlideVia::Grouped),
             OscCommand::Pan(cid, out, p) => apply_grouped_pan(state, cid, out, p),
             OscCommand::Mute(cid, m) => {
                 set_channel_mute(state, cid, m);
@@ -9206,16 +9315,9 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 // `strip_params`); `set_channel_volume` routes this
                 // through the output-pair link logic. A jump up of more
                 // than RAMP_OVER_DB glides (OpenCode's job 9).
-                let from = fader_level(state, cid, id);
-                let db = |x: f32| 20.0 * x.max(1e-6).log10();
-                if db(v) > db(from) + RAMP_OVER_DB as f32 {
-                    set_level_gently(state, cid, id, v, GlideVia::Strip);
-                } else {
-                    // A glide still under way would carry on past this move
-                    // (Qwen's review).
-                    stop_fader_glides(state, cid);
-                    set_channel_volume(state, cid, id, v);
-                }
+                // A burst of small steps adding up glides too (the security
+                // review): `set_remote_level`.
+                set_remote_level(state, cid, id, v, GlideVia::Strip);
                 notify_osc(state, OscOutbound::OutputVolume(id, v));
             }
             OscCommand::Gain(idx, db) => {
@@ -9223,9 +9325,24 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 // does (OpenCode's job 36: one message raised a preamp by up
                 // to 65 dB); the ramp tells the client as it climbs.
                 let from = state.device.inputs().get(idx).and_then(|c| c.gain).unwrap_or(0);
+                // Where this remote's burst began: many small raises glide as
+                // one big one does (the security review: 11 messages of +6 dB
+                // took a preamp from 0 to 65 dB).
+                let now = Instant::now();
+                // One budget for every remote gain raise in a burst (a
+                // linked AN1/2 moves both preamps), refilled by a quiet second.
+                if now.duration_since(state.remote_gain_rise.1) > REMOTE_BURST {
+                    state.remote_gain_rise.0 = 0;
+                }
+                state.remote_gain_rise.1 = now;
+                let rise = db.saturating_sub(from);
                 state.gain_ramps.remove(&idx);
                 state.gain_ramps.remove(&(idx ^ 1));
-                if db > from + RAMP_OVER_DB {
+                let glide = rise > RAMP_OVER_DB || state.remote_gain_rise.0 + rise > RAMP_OVER_DB;
+                if !glide {
+                    state.remote_gain_rise.0 += rise;
+                }
+                if glide {
                     let top = state.device.inputs().get(idx).and_then(|c| c.gain_max).map_or(db, |m| db.min(m));
                     state.gain_ramps.insert(idx, (from, top, Instant::now()));
                 } else if let Err(e) = state.device.set_input_gain(idx, db) {
@@ -9240,6 +9357,20 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                     notify_osc(state, OscOutbound::Gain(idx, applied));
                 }
             }
+            // 48V on from a remote waits for the user's own presses, as on
+            // screen (the security review: anyone on this computer can send
+            // OSC while it's on; it switched 48V on directly). Off is safe.
+            // A linked pair's 48V key powers both sides, so both must
+            // already be on for a remote's "on" to change nothing.
+            OscCommand::Phantom(idx, true)
+                if state.confirm_48v
+                    && !(state.device.inputs().get(idx).is_some_and(|c| c.phantom)
+                        && (!state.device.input_pair_linked(idx / 2) || state.device.inputs().get(idx ^ 1).is_some_and(|c| c.phantom))) =>
+            {
+                let name = state.device.inputs().get(idx).map_or_else(String::new, |c| c.name.clone());
+                state.notice = Some((format!("48V on {name} was asked for over OSC: press its 48V key twice to switch it on."), Instant::now()));
+                osc_echo(state, &OscCommand::Phantom(idx, true));
+            }
             OscCommand::Phantom(idx, on) => {
                 if let Err(e) = state.device.set_input_phantom(idx, on) {
                     fail(state, "set_input_phantom", &e);
@@ -9253,6 +9384,13 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 } else {
                     notify_osc(state, OscOutbound::InputPhase(idx, on));
                 }
+            }
+            // LOOP on changes what the computer records (a call or stream
+            // gets everything played there): from a remote it waits for the
+            // user's own two presses, as on screen. Off is safe.
+            OscCommand::Loopback(pair, true) if !state.device.outputs().get(pair * 2).is_some_and(|o| o.loopback) => {
+                state.notice = Some(("LOOP was asked for over OSC: press LOOP twice on the output to switch it on.".to_string(), Instant::now()));
+                osc_echo(state, &OscCommand::Loopback(pair, true));
             }
             OscCommand::Loopback(pair, on) => {
                 if let Err(e) = state.device.set_loopback(pair, on) {
@@ -10661,6 +10799,11 @@ pub(crate) fn fail(state: &mut TuxMix, what: &str, error: &dyn std::fmt::Display
         // another model, or a control the driver doesn't have.
         None if said.contains("cannot be applied to") => {
             format!("{} didn't change: it was saved on a different model of interface.", plain_name(what))
+        }
+        // A file that doesn't fit this unit (the wrong number of channels or
+        // mixes): refused before anything was written; nothing to retry.
+        None if said.starts_with("it holds") => {
+            format!("{} didn't change: that mix doesn't fit this unit ({said}). Nothing was written.", plain_name(what))
         }
         None if said.starts_with("Mixer element not found") => format!(
             "{} didn't change: the Babyface driver here doesn't have that control. Updating the driver may add it.",
@@ -15837,6 +15980,32 @@ pub(crate) fn remote_hidden(state: &TuxMix, cid: ChannelId) -> bool {
 }
 
 /// The channel an OSC command or echo is about, if any.
+/// Whether an OSC command names a channel (and a submix) the unit has.
+/// Anyone on this computer can send OSC while it's on: a command for
+/// channel 9999 is dropped here, before the lock, the echo or a backend
+/// that indexes without checking sees it.
+pub(crate) fn osc_in_range(state: &TuxMix, cmd: &OscCommand) -> bool {
+    let d = &state.device;
+    let channel = |cid: ChannelId| match cid {
+        ChannelId::Input(i) => i < d.inputs().len(),
+        ChannelId::Playback(i) => i < d.playbacks().len(),
+        ChannelId::Output(i) => i < d.outputs().len(),
+    };
+    let submixes = |cid: ChannelId| match cid {
+        ChannelId::Input(i) => d.inputs().get(i).map_or(0, |c| c.volumes.len()),
+        ChannelId::Playback(i) => d.playbacks().get(i).map_or(0, |c| c.volumes.len()),
+        ChannelId::Output(_) => 0,
+    };
+    match *cmd {
+        OscCommand::Volume(cid, out, _) | OscCommand::Pan(cid, out, _) => channel(cid) && out < submixes(cid),
+        OscCommand::Mute(cid, _) | OscCommand::Solo(cid, _) => channel(cid),
+        OscCommand::OutputVolume(i, _) => i < d.outputs().len(),
+        OscCommand::Gain(i, _) | OscCommand::Phantom(i, _) | OscCommand::Pad(i, _) | OscCommand::InputPhase(i, _) => i < d.inputs().len(),
+        OscCommand::Loopback(pair, _) => pair < d.outputs().len() / 2,
+        OscCommand::Refresh => true,
+    }
+}
+
 fn osc_channel_in(cmd: &OscCommand) -> Option<ChannelId> {
     match cmd {
         OscCommand::Volume(cid, ..) | OscCommand::Pan(cid, ..) | OscCommand::Mute(cid, _) | OscCommand::Solo(cid, _) => Some(*cid),

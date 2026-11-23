@@ -38,9 +38,9 @@ pub enum MidiSource {
 impl std::fmt::Display for MidiSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MidiSource::Cc { channel, number } => write!(f, "CC {number} (ch {})", channel + 1),
-            MidiSource::Note { channel, number } => write!(f, "note {number} (ch {})", channel + 1),
-            MidiSource::Bend { channel } => write!(f, "pitch bend (ch {})", channel + 1),
+            MidiSource::Cc { channel, number } => write!(f, "CC {number} (ch {})", u16::from(*channel) + 1),
+            MidiSource::Note { channel, number } => write!(f, "note {number} (ch {})", u16::from(*channel) + 1),
+            MidiSource::Bend { channel } => write!(f, "pitch bend (ch {})", u16::from(*channel) + 1),
         }
     }
 }
@@ -330,24 +330,24 @@ fn read_loop(tx: &tokio::sync::mpsc::Sender<FromMidi>) -> Result<(), String> {
         let from = (src.client, src.port);
         let midi = match event.get_type() {
             EventType::Controller => event.get_data::<EvCtrl>().map(|c| MidiEvent {
-                source: MidiSource::Cc { channel: c.channel, number: c.param.min(127) as u8 },
+                source: MidiSource::Cc { channel: c.channel & 0x0F, number: c.param.min(127) as u8 },
                 value: c.value.clamp(0, 127) as u16,
                 from,
             }),
             EventType::Noteon => event.get_data::<EvNote>().map(|n| MidiEvent {
-                source: MidiSource::Note { channel: n.channel, number: n.note },
+                source: MidiSource::Note { channel: n.channel & 0x0F, number: n.note },
                 value: n.velocity as u16,
                 from,
             }),
             EventType::Noteoff => event.get_data::<EvNote>().map(|n| MidiEvent {
-                source: MidiSource::Note { channel: n.channel, number: n.note },
+                source: MidiSource::Note { channel: n.channel & 0x0F, number: n.note },
                 value: 0,
                 from,
             }),
             // ALSA gives pitch bend as -8192..8191.
             EventType::Pitchbend => event.get_data::<EvCtrl>().map(|c| MidiEvent {
-                source: MidiSource::Bend { channel: c.channel },
-                value: (c.value + 8192).clamp(0, 16383) as u16,
+                source: MidiSource::Bend { channel: c.channel & 0x0F },
+                value: c.value.saturating_add(8192).clamp(0, 16383) as u16,
                 from,
             }),
             EventType::PortStart => {

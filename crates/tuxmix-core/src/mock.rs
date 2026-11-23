@@ -1087,6 +1087,7 @@ impl RmeDevice for MockBabyfacePro {
         // Another number of channels would replace this unit's lists
         // (OpenCode's job 50: the quit's sync and USB's start came this way).
         scene.check_shape(self.inputs.len(), self.playbacks.len(), self.outputs.len())?;
+        scene.check_lists(&self.inputs, &self.playbacks)?;
         // What the card is given, in the order the real backend gives it:
         // the mutes and solos first, so a strip that the scene mutes is
         // never heard with its level first.
@@ -1152,11 +1153,14 @@ impl RmeDevice for MockBabyfacePro {
         for ch in &mut outputs {
             ch.volume = safe_level(ch.volume);
         }
+        Scene::safe_outputs(&mut outputs, &self.outputs);
         self.inputs = inputs;
         self.playbacks = playbacks;
         self.outputs = outputs;
         let fx_return_now = std::mem::take(&mut self.settings.fx_return);
-        self.settings = scene.settings.clone();
+        let mut settings = scene.settings.clone();
+        Scene::safe_settings(&mut settings, &self.settings);
+        self.settings = settings;
         // A scene from before the FX return leaves the returns as they are.
         if scene.settings.fx_return.is_empty() {
             self.settings.fx_return = fx_return_now;
