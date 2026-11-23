@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 — (unreleased)
+## 0.1.1 — early preview (2026-11-23)
 
 Fixes and small helpers after the first preview.
 
