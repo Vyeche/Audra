@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: A question
+    url: https://github.com/Vyeche/Audra/discussions/categories/q-a
+    about: How do I…? Ask in Discussions (Q&A); issues are for problems and ideas.
   - name: How to use Audra
     url: https://github.com/Vyeche/Audra/wiki
     about: The how-to wiki, step by step with pictures.
