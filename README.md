@@ -33,7 +33,14 @@ AUDRA_MOCK_DEMO=1 cargo run --release -p audra -- --mock
 
 The simulation shows a small studio (a mic on AN1, a second on AN2, a guitar on IN3/4). Nothing you do in it reaches any hardware.
 
-**2. Install it for your Babyface Pro FS.** You need Linux 6.12 or newer for the driver (`uname -r`; on Ubuntu 24.04, install `linux-generic-hwe-24.04` and reboot). Put the interface in PC mode (at power-on the meters show nothing; if they show **CC**, hold SELECT and DIM while plugging in the USB cable), then build and install the two packages, Audra and its driver:
+**2. Install it for your Babyface Pro FS.** You need Linux 6.12 or newer for the driver (`uname -r`; on Ubuntu 24.04, install `linux-generic-hwe-24.04` and reboot). Put the interface in PC mode (at power-on the meters show nothing; if they show **CC**, hold SELECT and DIM while plugging in the USB cable), then install the two packages, Audra and its driver. Ready-made ones are on the [Releases page](https://github.com/Vyeche/Audra/releases): download both `.deb` files of the newest version into a folder, and from that folder:
+
+```sh
+sudo apt install dkms linux-headers-$(uname -r)
+sudo apt install ./audra_*.deb ./snd-usb-babyface-pro-dkms_*.deb
+```
+
+Or build them yourself from the checkout:
 
 ```sh
 sudo apt install dkms linux-headers-$(uname -r)
@@ -61,7 +68,7 @@ More in the [wiki's tutorials](https://github.com/Vyeche/Audra/wiki/Tutorials).
 
 ## Status
 
-Early and personal: version 0.1.0, tested on one machine (Pop!_OS 24.04, kernel 7.2.6, one Babyface Pro FS).
+Early and personal: version 0.1.1, tested on one machine (Pop!_OS 24.04, kernel 7.2.6, one Babyface Pro FS).
 
 **Works:**
 - Quick setup, Mixer and Matrix views (the first launch opens Quick setup); one row open at a time on short windows, or two rows side by side. Quick is a guided setup in three steps: your mic (its preset and 48V), its level (a meter with a "speak here" band and the gain), and where you hear it, each ticking off when it's right. An optional fourth step, "Make your voice sound good", opens your mic's D panel with the Clear Calls preset set ("Not now" puts it away for good). A mic listens on the Phones by default; an open mic (48V on or a high gain) sent to the speakers is a warning, not a tick, since it can howl; the Now Mixing card says the same in any view, in one line that opens to "Take it out" (that one send, undoable) or "It's meant to be there" (remembered; Audra settings → App warns again). Quick's choice of where to listen is its own and doesn't change the Mixer's mix.
