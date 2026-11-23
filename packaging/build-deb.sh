@@ -27,7 +27,11 @@ ARCH=$(dpkg --print-architecture)
 MAINTAINER=${DEB_MAINTAINER:-"$(git config user.name 2>/dev/null || echo "Local build") <$(git config user.email 2>/dev/null || echo "nobody@localhost")>"}
 
 if [ "${1:-}" != "--no-build" ]; then
-    cargo build --release -p audra
+    # The builder's home and checkout paths stay out of the binary (panic
+    # messages embed source paths; a public package showed the builder's
+    # user name in /home/<name>/.cargo/...).
+    RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/build --remap-path-prefix=$(pwd)=/audra" \
+        cargo build --release -p audra
 fi
 BIN="$TARGET/release/audra"
 [ -x "$BIN" ] || { echo "No release binary at $BIN" >&2; exit 1; }
