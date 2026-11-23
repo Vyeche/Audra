@@ -51,7 +51,7 @@ body:
     id: version
     attributes:
       label: Audra version
-      description: Shown at the top left (for example "v0.1.0 alpha · build 1467").
+      description: Shown at the top left (for example "v0.1.0 alpha · build 1467"). Quicker for all three fields below, Help → About → "Copy these details for a bug report", then paste them here.
     validations:
       required: true
   - type: input

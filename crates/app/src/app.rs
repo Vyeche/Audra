@@ -1468,6 +1468,9 @@ pub enum Message {
     OpenRepoUrl,
     /// About's "How to use Audra": the wiki in the browser.
     OpenWikiUrl,
+    /// About's "Copy details for a bug report": the version, device,
+    /// kernel, system and driver on the clipboard (`about::bug_details`).
+    CopyBugDetails,
     ClockSourceSelected(String),
     SampleRateSelected(u32),
 
@@ -6577,6 +6580,7 @@ fn is_undoable(message: &Message) -> bool {
             | Message::MonitorMoreOpen(_)
             | Message::OpenRepoUrl
             | Message::OpenWikiUrl
+            | Message::CopyBugDetails
             | Message::Undo
             | Message::Redo
             | Message::SidebarTab(_)
@@ -9937,6 +9941,11 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
         }
         Message::OpenRepoUrl => open_url(about::REPO_URL),
         Message::OpenWikiUrl => open_url(about::WIKI_URL),
+        Message::CopyBugDetails => {
+            let details = about::bug_details(state);
+            state.notice = Some(("Copied the details: paste them into the issue form, under what happened.".to_string(), Instant::now()));
+            return iced::clipboard::write(details);
+        }
         Message::ClockSourceSelected(source) => {
             if let Err(e) = state.device.set_clock_source(&source) {
                 fail(state, "set_clock_source", &e);
@@ -24390,6 +24399,7 @@ mod tests {
         assert!(!is_undoable(&Message::ToggleAbout));
         assert!(!is_undoable(&Message::OpenRepoUrl));
         assert!(!is_undoable(&Message::OpenWikiUrl));
+        assert!(!is_undoable(&Message::CopyBugDetails));
 
         let mut state = new(true, None, None);
         let _ = update(&mut state, Message::ToggleAbout);
@@ -28863,6 +28873,7 @@ mod findability_tests {
     #[test]
     fn the_wiki_link_is_not_an_undo_step() {
         assert!(!is_undoable(&Message::OpenWikiUrl));
+        assert!(!is_undoable(&Message::CopyBugDetails));
         assert!(about::WIKI_URL.starts_with("https://"));
     }
 }
