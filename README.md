@@ -10,11 +10,11 @@ Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyfa
 
 *Quick setup, one press for a podcast, then the Mixer: levels glide and the meters move. Every picture here is Audra's simulated device with a small studio set up.*
 
-**▶ [Watch the one-minute tour on YouTube](https://youtu.be/phW8Z627bA8)**
+**▶ [Watch the one-minute tour on YouTube](https://youtu.be/pckCgA68kao)**
 
 ## Early preview
 
-Audra is an **early preview** for people willing to test. The driver and the basic mixer have run on one Babyface Pro FS, but most of what's listed below has only been checked in the simulation (`--mock`, no unit needed) and **has not yet been tried on a real Babyface**.
+Audra is an **early preview** for people willing to test. It has been tried on a real Babyface Pro FS, the author's, on one machine (Pop!_OS 24.04), so it hasn't met other units, systems or setups yet: that's where testers help most. Everything also runs in the simulation (`--mock`, no unit needed).
 
 - **Start with your speakers and headphones turned down.** Audra routes microphones, often with 48V phantom power on. It warns about an open mic in the speakers and keeps its reverb out of them, but a setting you didn't expect can still feed back.
 - **It needs its own kernel driver** (below). Reverb and Echo need the driver's newer FX channels; an older driver can't play them back (Audra says so).

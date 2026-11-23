@@ -1,6 +1,6 @@
 # Contributing to Audra
 
-Thanks for helping. Audra is an early preview: a Linux mixer for the RME Babyface Pro FS in the spirit of TotalMix FX. **It has not yet been tested on a real Babyface**, so reports from people with the unit are worth a lot.
+Thanks for helping. Audra is an early preview: a Linux mixer for the RME Babyface Pro FS in the spirit of TotalMix FX. **It has been tried on one Babyface (the author's)**, so reports from people with other units and setups are worth a lot.
 
 ## Reporting a problem or an idea
 

@@ -2,7 +2,7 @@
 
 ## 0.1.0 — early preview (unreleased)
 
-The first public preview, for people willing to test. The driver and the basic mixer have run on one Babyface Pro FS; most of the rest has only been checked in the simulation. See the README's [Early preview](README.md#early-preview) section before you start.
+The first public preview, for people willing to test. It has been tried on one Babyface Pro FS, the author's, on one machine; other units and systems haven't been tried yet. See the README's [Early preview](README.md#early-preview) section before you start.
 
 What's in it:
 - **Mixing like TotalMix FX:** input, playback and output rows, one submix per output, the Control Room (Main and Phones, Dim, Mono, Talkback, Cue, Speaker B, Cough), the routing Matrix, snapshots, groups, layouts and workspaces.
