@@ -38,7 +38,7 @@ jobs:
     outputs:
       code: ${{ steps.plan.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: System libraries
@@ -101,7 +101,7 @@ jobs:
             libxkbcommon-dev libwayland-dev libfontconfig1-dev libdbus-1-dev
       - name: Rust (stable, with Clippy)
         run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -123,7 +123,7 @@ jobs:
     timeout-minutes: 45
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: System libraries
@@ -135,7 +135,7 @@ jobs:
             xvfb xauth libxcursor1 libxrandr2 libxi6 libx11-xcb1 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers libgl1 libegl1
       - name: Rust (stable)
         run: rustup toolchain install stable --profile minimal && rustup default stable
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -144,7 +144,7 @@ jobs:
           key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo build --release -p audra --locked
       - run: bash tools/checks/totalMix-gauntlet-shots.sh target/release/audra shots
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: screenshots
