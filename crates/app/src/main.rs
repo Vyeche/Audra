@@ -183,6 +183,7 @@ enum OpenPanel {
     About,
     /// The Workspaces panel (W).
     Workspaces,
+    WorkspacesBefore,
     /// The EQ panel of the first input strip.
     Eq,
     /// AN1's EQ panel open, its EQ bypassed (`eq-off`).
@@ -353,6 +354,7 @@ fn parse_open(args: &[String]) -> Option<OpenPanel> {
         Some("device") => Some(OpenPanel::Device),
         Some("about") => Some(OpenPanel::About),
         Some("workspaces") => Some(OpenPanel::Workspaces),
+        Some("workspaces-before") => Some(OpenPanel::WorkspacesBefore),
         Some("eq") => Some(OpenPanel::Eq),
         Some("eq-off") => Some(OpenPanel::EqOff),
         Some("input") => Some(OpenPanel::Input),
@@ -508,6 +510,11 @@ fn open_panel(state: &mut app::TuxMix, panel: OpenPanel) {
         OpenPanel::Device => state.show_device_panel = true,
         OpenPanel::About => state.show_about = true,
         OpenPanel::Workspaces => state.show_workspaces = true,
+        // After a file was opened: the key that brings back the one before.
+        OpenPanel::WorkspacesBefore => {
+            state.workspace_before = Some(crate::workspaces::capture(state, "Before opening Theirs"));
+            state.show_workspaces = true;
+        }
         OpenPanel::Eq => {
             state.flyout_open.insert((
                 tuxmix_core::ChannelId::Input(0),

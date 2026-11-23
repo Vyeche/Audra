@@ -1,8 +1,8 @@
 # Audra
 
-A hardware mixer for the **RME Babyface Pro FS** on Linux. Audra works the way the Windows mixer does (input, playback and output rows, one submix at a time, a Control Room and a routing matrix), in a look of its own. It runs with the unit in its regular USB mode (PC mode, `2a39:3fc0`).
+**A friendly mixer for the RME Babyface Pro FS on Linux.** Audra walks you through setting up your mic and headphones, sets up a podcast, a call, a recording or a stream in one press, and looks after your ears and speakers while you learn: it never puts an open mic in the speakers by itself, levels glide instead of jumping, and 48V waits for your own press. Underneath is the full mixer the unit is known for, working the way the Windows mixer does (input, playback and output rows, a submix for every output, a Control Room and a routing matrix), in a look of its own. It runs with the unit in its regular USB mode (PC mode, `2a39:3fc0`).
 
-Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyface-pro`](https://github.com/ismail-bahloul/babyface-pro-linux) kernel driver and [TuxMix](https://github.com/ismail-bahloul/TuxMix). Its GUI started as TuxMix's.
+Audra stands on two community projects by ismail-bahloul: the [`snd-usb-babyface-pro`](https://github.com/ismail-bahloul/babyface-pro-linux) kernel driver and [TuxMix](https://github.com/ismail-bahloul/TuxMix). See [Audra and TuxMix](#audra-and-tuxmix).
 
 > Not affiliated with RME. *TotalMix*, *TotalMix FX*, *Babyface Pro* and *Babyface Pro FS* are trademarks of RME Intelligent Audio Solutions.
 
@@ -11,6 +11,14 @@ Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyfa
 *Quick setup, one press for a podcast, then the Mixer: levels glide and the meters move. Every picture here is Audra's simulated device with a small studio set up.*
 
 **▶ [Watch the one-minute tour on YouTube](https://youtu.be/pckCgA68koo)**
+
+## What Audra adds
+
+- **Quick setup.** Three steps (your mic, its level, where you hear it) that tick off when they're right, then "What are you doing?": a podcast or call, a headphone mix, recording or streaming, each one press and one Undo.
+- **Safe by default.** A warning, with the one press that fixes it, when an open mic reaches the speakers. No level jumps up more than 6 dB at once, whether from a snapshot, Undo or a remote control. 48V and loopback switch on only with your own press, and the reverb stays out of the speakers.
+- **Learn as you go.** Plain names under the outputs (*your speakers*, *your headphones*), **What's this?** for every control, a map of where each sound goes, and nine "How do I…" guides that tick off as you do them.
+- **A studio on the computer.** Reverb and Echo through the unit's FX send and return; Voice (presets such as Clear Calls, and noise removal) for what your call apps hear; one-press recording to WAV.
+- **Feels like hardware.** Turned knobs, metal fader caps, LED meters and ten colour themes, with small sounds and celebrations for real firsts (each can be switched off).
 
 ## Early preview
 
@@ -65,6 +73,12 @@ The [wiki](https://github.com/Vyeche/Audra/wiki) shows each part with pictures a
 | ![Audra in its ten colour themes](docs/images/themes.gif) | **Ten colour themes**, High contrast included, a theme that follows the time of day, and themes of your own. |
 
 More in the [wiki's tutorials](https://github.com/Vyeche/Audra/wiki/Tutorials).
+
+## Audra and TuxMix
+
+Audra began from TuxMix's GUI, and it still runs on TuxMix's device model and USB backend (`crates/tuxmix-core`, `crates/tuxmix-usb`, kept as git subtrees) and on ismail-bahloul's driver. Audra adds its own safety rules for loading a saved mix there, and fixes found along the way go back upstream as pull requests ([TuxMix #69](https://github.com/ismail-bahloul/TuxMix/pull/69) and [#70](https://github.com/ismail-bahloul/TuxMix/pull/70)).
+
+The window on top has been rebuilt as Audra's own: its look and words, Quick setup, the safety rules, Reverb and Echo, Voice, recording and the guides. The two are separate apps with different aims. Audra's is to guide people through setup and keep mics and levels safe, so it moves on its own track. If Audra is useful to you, TuxMix and the driver made it possible: they deserve a star too.
 
 ## Status
 

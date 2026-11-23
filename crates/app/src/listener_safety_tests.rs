@@ -1060,7 +1060,9 @@ fn a_workspace_or_recall_with_the_overrides_on_has_no_loud_moment() {
         let state = state_with_a_mix();
         let ws = crate::workspaces::capture(&state, "test");
         let mut on = with_overrides_on(extra.clone());
-        no_loud_moment(&format!("workspace, {name}"), &mut on, |s| crate::workspaces::apply(s, ws.clone()));
+        no_loud_moment(&format!("workspace, {name}"), &mut on, |s| {
+            crate::workspaces::apply(s, ws.clone());
+        });
         let mut on = with_overrides_on(extra.clone());
         let ws = crate::workspaces::capture(&state, "test");
         no_step_over_6_db(&format!("workspace, {name}"), &mut on, |s| {
@@ -1876,6 +1878,9 @@ fn an_open_mics_reverb_states_follow_what_plays() {
     let _ = update(&mut state, Message::FxReturn(main, 10f32.powf(-1.5 / 20.0)));
     assert_eq!(crate::fx::mic_reverb_hazard(&state), Some(main), "raised by hand: a hazard, said");
     assert!(!crate::fx::heard(&state), "and no win: no milestone or flare for it");
+    // The speakers' map says it too (OpenCode's job 84).
+    let lane = crate::flow::fx_return_lane(&state, main, false).expect("a Reverb lane");
+    assert!(lane.note.contains("can howl"), "the map names the hazard: {}", lane.note);
     // Seen from the headphones' mix as well (critique #110 A P2-1).
     state.sel_out = phones;
     assert_eq!(crate::fx::mic_reverb_hazard(&state), Some(main));

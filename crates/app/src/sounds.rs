@@ -531,7 +531,7 @@ pub fn for_message(state: &TuxMix, message: &Message) -> Option<Sound> {
         // A new theme and a workspace or reset that changes everything
         // are moves too.
         Message::SetTheme(i) if *i != state.theme_shown => Some(Sound::Move),
-        Message::WorkspaceLoad(_) | Message::ResetMix(_) => Some(Sound::Move),
+        Message::WorkspaceLoad(_) | Message::WorkspaceRestoreBefore | Message::ResetMix(_) => Some(Sound::Move),
         // Voice, Quick setup's step 4, Rec and the folded band (the owner,
         // 2026-11-12: "add subtle fun sounds throughout"; they were silent).
         // A knob's drag (`Param`) stays silent, as faders do.
