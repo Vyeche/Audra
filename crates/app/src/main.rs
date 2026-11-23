@@ -513,6 +513,7 @@ fn open_panel(state: &mut app::TuxMix, panel: OpenPanel) {
         // After a file was opened: the key that brings back the one before.
         OpenPanel::WorkspacesBefore => {
             state.workspace_before = Some(crate::workspaces::capture(state, "Before opening Theirs"));
+            state.workspace_loaded = true;
             state.show_workspaces = true;
         }
         OpenPanel::Eq => {

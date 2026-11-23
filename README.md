@@ -16,7 +16,7 @@ Audra stands on two community projects by ismail-bahloul: the [`snd-usb-babyface
 
 - **Quick setup.** Three steps (your mic, its level, where you hear it) that tick off when they're right, then "What are you doing?": a podcast or call, a headphone mix, recording or streaming, each one press and one Undo.
 - **Safe by default.** A warning, with the one press that fixes it, when an open mic reaches the speakers. No level jumps up more than 6 dB at once, whether from a snapshot, Undo or a remote control. 48V and loopback switch on only with your own press, and the reverb stays out of the speakers.
-- **Learn as you go.** Plain names under the outputs (*your speakers*, *your headphones*), **What's this?** for every control, a map of where each sound goes, and nine "How do I…" guides that tick off as you do them.
+- **Learn as you go.** Plain names under the outputs (*your speakers*, *your headphones*), **What's this?** to see what the controls do as you point at them, a map of where each sound goes, and nine "How do I…" guides that tick off as you do them.
 - **A studio on the computer.** Reverb and Echo through the unit's FX send and return; Voice (presets such as Clear Calls, and noise removal) for what your call apps hear; one-press recording to WAV.
 - **Feels like hardware.** Turned knobs, metal fader caps, LED meters and ten colour themes, with small sounds and celebrations for real firsts (each can be switched off).
 
@@ -82,7 +82,7 @@ The window on top has been rebuilt as Audra's own: its look and words, Quick set
 
 ## Status
 
-Early and personal: version 0.1.2, tested on one machine (Pop!_OS 24.04, kernel 7.2.6, one Babyface Pro FS).
+Early and personal: version 0.1.3, tested on one machine (Pop!_OS 24.04, kernel 7.2.6, one Babyface Pro FS).
 
 **Works:**
 - Quick setup, Mixer and Matrix views (the first launch opens Quick setup); one row open at a time on short windows, or two rows side by side. Quick is a guided setup in three steps: your mic (its preset and 48V), its level (a meter with a "speak here" band and the gain), and where you hear it, each ticking off when it's right. An optional fourth step, "Make your voice sound good", opens your mic's D panel with the Clear Calls preset set ("Not now" puts it away for good). A mic listens on the Phones by default; an open mic (48V on or a high gain) sent to the speakers is a warning, not a tick, since it can howl; the Now Mixing card says the same in any view, in one line that opens to "Take it out" (that one send, undoable) or "It's meant to be there" (remembered; Audra settings → App warns again). Quick's choice of where to listen is its own and doesn't change the Mixer's mix.

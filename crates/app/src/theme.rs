@@ -14,14 +14,9 @@ pub const SANS_SEMI: Font = Font {
     weight: iced::font::Weight::Semibold,
     ..SANS
 };
-/// Keys and the M/S buttons: short words that must read at a glance.
-pub const SANS_BOLD: Font = Font {
-    weight: iced::font::Weight::Bold,
-    ..SANS
-};
 /// Every number: the Mono sibling, fixed width so readouts hold still.
 pub const MONO: Font = Font::with_name("Atkinson Hyperlegible Mono");
-/// Row names and the Now Mixing placard only (Bold is the one weight shipped).
+/// Row names, strip names on their tape and the Now Mixing placard (Bold is the one weight shipped).
 pub const SERIF: Font = Font {
     weight: iced::font::Weight::Bold,
     ..Font::with_name("Shippori Mincho")
@@ -1732,6 +1727,63 @@ pub fn strip_rim(selected: bool, focused: bool, lamp: f32) -> Option<(Color, f32
     }
 }
 
+/// The tape label's ink: dark on the cream tape in every theme.
+pub const TAPE_INK: Color = Color { r: 0.16, g: 0.11, b: 0.13, a: 1.0 };
+pub const TAPE_QUIET: Color = Color { r: 0.40, g: 0.32, b: 0.35, a: 1.0 };
+/// A strip of cream label tape across the strip's head, as on a studio
+/// console (the owner's pick, 2026-11-23: Audra's own face, not the
+/// skeleton it shares with TuxMix). On a light theme the tape is a warmer,
+/// deeper cream with a firmer edge, so it still reads on a pale floor.
+pub fn tape_plate(_theme: &iced::Theme) -> container::Style {
+    let (cream, shade, edge) = if dark_theme() {
+        (Color { r: 0.94, g: 0.90, b: 0.82, a: 1.0 }, Color { r: 0.88, g: 0.83, b: 0.74, a: 1.0 }, 0.35)
+    } else {
+        // Calmer than a bright yellow (Fable: the loudest thing on the page).
+        (Color { r: 0.97, g: 0.93, b: 0.80, a: 1.0 }, Color { r: 0.93, g: 0.88, b: 0.72, a: 1.0 }, 0.45)
+    };
+    container::Style {
+        background: Some(lit_from_above(cream, shade)),
+        text_color: Some(TAPE_INK),
+        border: Border { color: Color { a: edge, ..Color::BLACK }, width: 1.0, radius: 2.0.into() },
+        shadow: iced::Shadow { color: Color { a: 0.45, ..Color::BLACK }, offset: iced::Vector::new(0.0, 1.0), blur_radius: 2.0 },
+        ..container::Style::default()
+    }
+}
+
+/// The desk's shade behind a row's strips: a touch on a light theme, where
+/// more greyed the strips' faces (Fable's review: 249 down to 223).
+pub fn desk_shade() -> Color {
+    Color { a: if dark_theme() { 0.45 } else { 0.07 }, ..Color::BLACK }
+}
+
+/// One desk holding a row's strips, its seams the grooves between them
+/// (the owner's pick, 2026-11-23).
+pub fn desk_bezel(_theme: &iced::Theme) -> container::Style {
+    // A shade, not a colour: the strips are a little see-through, so a
+    // solid groove behind them greyed their faces (the light theme's
+    // capture); this darkens them only a touch and the seams more.
+    let groove = desk_shade();
+    container::Style {
+        background: Some(Background::Color(groove)),
+        // No frame or padding: the desk lies behind the strips, its groove
+        // showing only between them, so no strip moves.
+        border: Border { radius: RADIUS_SM.into(), ..Border::default() },
+        shadow: iced::Shadow { color: Color { a: 0.5, ..Color::BLACK }, offset: iced::Vector::new(0.0, 2.0), blur_radius: 6.0 },
+        ..container::Style::default()
+    }
+}
+
+/// A state word (PAD, DIM, LOOP, a width) on the tape keeps its colour on
+/// the ground it always has, a chip of the strip's own dark panel, so the
+/// state cues look as they always did.
+pub fn tape_state_chip(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(p().floors[0])),
+        border: Border { radius: 2.0.into(), ..Border::default() },
+        ..container::Style::default()
+    }
+}
+
 pub fn strip_panel(selected: bool, hovered: bool, lamp: f32, focused: bool) -> impl Fn(&iced::Theme) -> container::Style {
     move |_theme| {
         // A brushed panel in a hairline frame (2026-11-03, the owner, from
@@ -1755,10 +1807,14 @@ pub fn strip_panel(selected: bool, hovered: bool, lamp: f32, focused: bool) -> i
             // rim in the fader colour where it has none, and a glow in it
             // either way, so a strip both selected and focused shows both
             // (the reviewer: focus had hidden the selection).
+            // Square modules side by side on one desk (the owner's pick,
+            // 2026-11-23), framed when selected, focused or lit, as before;
+            // High contrast keeps every strip's edge (Fable's review: an
+            // unlit face of 11 on black had none).
             border: Border {
                 color: strip_rim(selected, focused, lamp).map_or(border(), |(c, _)| c),
-                width: strip_rim(selected, focused, lamp).map_or(1.0, |(_, w)| w),
-                radius: RADIUS_SM.into(),
+                width: strip_rim(selected, focused, lamp).map_or(if is_high_contrast() { 1.0 } else { 0.0 }, |(_, w)| w),
+                radius: 0.0.into(),
             },
             ..container::Style::default()
         }
@@ -1775,7 +1831,8 @@ pub fn strip_veil(selected: bool, hovered: bool, lamp: f32, focused: bool, tone:
         // The face is see-through over its floor (a few per cent of light
         // on a dark theme): flattened onto the floor (`tone`, as `floor`),
         // so the veil hides what's under it.
-        let ground = p().floors[tone.min(2)];
+        // The floor under the desk's shade, as the strip lies on it.
+        let ground = layer(desk_shade(), p().floors[tone.min(2)]);
         let fade = |c: Color| Color { a: a.clamp(0.0, 1.0), ..layer(c, ground) };
         let background = base.background.map(|b| match b {
             Background::Color(c) => Background::Color(fade(c)),
@@ -1788,7 +1845,7 @@ pub fn strip_veil(selected: bool, hovered: bool, lamp: f32, focused: bool, tone:
         });
         container::Style {
             background,
-            border: Border { radius: RADIUS_SM.into(), ..Border::default() },
+            border: Border { radius: 0.0.into(), ..Border::default() },
             ..container::Style::default()
         }
     }
@@ -1984,7 +2041,7 @@ pub fn strip_glow(focused: bool, lamp: f32) -> impl Fn(&iced::Theme) -> containe
     move |_theme| container::Style {
         // The active path's flare also lights the card's rim for a moment.
         border: Border {
-            radius: RADIUS_SM.into(),
+            radius: 0.0.into(),
             color: Color { a: 0.95 * flare, ..p().lamp },
             width: if flare > 0.0 { 2.0 } else { 0.0 },
         },
