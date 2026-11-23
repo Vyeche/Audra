@@ -236,10 +236,29 @@ impl Scene {
     /// unit keeps none, whatever the file says (OpenCode's job 43: a
     /// hand-edited file's gain on a line input showed on screen and never
     /// reached the unit). `now` is what the unit has.
+    ///
+    /// What the input *is* comes from the unit, never from the file: its id,
+    /// type, gain range and sensitivity switch. A file that called a mic
+    /// input "Instrument" had its gain written in the instrument's code,
+    /// which the mic preamp reads as about 54 dB for a 9 on screen (the
+    /// security review). The gain is clamped to the unit's range and the EQ
+    /// to the panel's.
     pub fn safe_preamps(inputs: &mut [InputChannel], now: &[InputChannel]) {
         for (s, n) in inputs.iter_mut().zip(now) {
+            s.id = n.id;
+            s.channel_type = n.channel_type;
+            s.gain_max = n.gain_max;
+            if n.sensitivity.is_none() {
+                s.sensitivity = None;
+            }
             if n.gain.is_none() {
                 s.gain = None;
+            }
+            if let (Some(g), Some(max)) = (s.gain, n.gain_max) {
+                s.gain = Some(g.min(max));
+            }
+            if let Some(eq) = s.eq.as_mut() {
+                safe_eq(eq);
             }
             if n.channel_type == crate::channel::ChannelType::Mic {
                 s.phantom = s.phantom && n.phantom;
@@ -251,6 +270,49 @@ impl Scene {
                 s.pad = n.pad;
             }
         }
+    }
+
+    /// The outputs a scene may set: what each output *is* comes from the
+    /// unit, and LOOP only goes off. Switched on, it changes what the
+    /// computer records (a call or a stream would get everything played
+    /// there), so it waits for the user's own two presses, as in the UI.
+    pub fn safe_outputs(outputs: &mut [OutputChannel], now: &[OutputChannel]) {
+        for (s, n) in outputs.iter_mut().zip(now) {
+            s.id = n.id;
+            s.loopback = s.loopback && n.loopback;
+        }
+    }
+
+    /// The settings a scene may set: the clock stays the unit's (a file
+    /// that switched it to an optical input with nothing plugged in would
+    /// stop the sound), and output EQ is clamped to the panel's range.
+    pub fn safe_settings(settings: &mut DeviceSettings, now: &DeviceSettings) {
+        settings.clock_source = now.clock_source.clone();
+        settings.clock_sources = now.clock_sources.clone();
+        // No more output EQs than the unit's outputs: each entry is sent to
+        // the DSP with its index in the channel byte (the second security
+        // review: an index of 240 or more overflowed it).
+        let most = if now.output_eq.is_empty() { 12 } else { now.output_eq.len() };
+        settings.output_eq.truncate(most);
+        for eq in settings.output_eq.iter_mut().flatten() {
+            safe_eq(eq);
+        }
+    }
+
+    /// Returns an error if a channel's level or pan list in this scene is
+    /// another length than the unit's: too short, the mixer later indexed
+    /// past its end and crashed; too long, the load stopped half way
+    /// (the security review). Checked with `check_shape`, before any write.
+    pub fn check_lists(&self, inputs: &[InputChannel], playbacks: &[PlaybackChannel]) -> Result<(), Error> {
+        let bad_in = self.inputs.iter().zip(inputs).position(|(s, n)| s.volumes.len() != n.volumes.len() || s.pans.len() != n.pans.len());
+        let bad_pb = self.playbacks.iter().zip(playbacks).position(|(s, n)| s.volumes.len() != n.volumes.len() || s.pans.len() != n.pans.len());
+        if let Some((what, i)) = bad_in.map(|i| ("input", i)).or(bad_pb.map(|i| ("playback", i))) {
+            return Err(Error::SceneShapeMismatch {
+                scene: format!("{what} {} with another number of mixes", i + 1),
+                device: "one level and pan per mix on every channel".into(),
+            });
+        }
+        Ok(())
     }
 
     /// Returns an error if this scene has another number of inputs,
@@ -277,6 +339,27 @@ impl Scene {
         }
         Ok(())
     }
+}
+
+/// An EQ as the panel allows it (the same ranges as the app's EQ plot:
+/// ±20 dB, Q 0.7–5, 20 Hz–20 kHz, a low cut of 20–500 Hz or off, a slope
+/// of 6, 12, 18 or 24 dB/octave): a file's values reach the unit no
+/// further than a hand on the panel could take them.
+pub fn safe_eq(eq: &mut crate::channel::InputEq) {
+    for b in eq.bands.iter_mut() {
+        b.gain_db = if b.gain_db.is_finite() { b.gain_db.clamp(-20.0, 20.0) } else { 0.0 };
+        b.q = if b.q.is_finite() { b.q.clamp(0.7, 5.0) } else { 0.7 };
+        b.freq_hz = b.freq_hz.clamp(20, 20_000);
+    }
+    if eq.low_cut_freq_hz != 0 {
+        eq.low_cut_freq_hz = eq.low_cut_freq_hz.clamp(20, 500);
+    }
+    eq.low_cut_slope_db_oct = match eq.low_cut_slope_db_oct {
+        0..=8 => 6,
+        9..=14 => 12,
+        15..=20 => 18,
+        _ => 24,
+    };
 }
 
 #[cfg(test)]

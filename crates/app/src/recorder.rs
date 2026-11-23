@@ -315,6 +315,15 @@ fn run(shared: &Shared, child: &Mutex<Option<Child>>, stop: &AtomicBool, from: O
         return;
     }
     if let Some(dir) = path.parent() {
+        // The no-home fallback folder must be this user's own before a take
+        // goes in it, here too, not only when a folder is picked (the
+        // second security review: another user could make it first).
+        if dir.starts_with(fallback_root()) {
+            if let Err(e) = crate::control::private_dir(&fallback_root()) {
+                set(shared, RecState::Failed(format!("Rec won\u{2019}t save there: {e}. Pick a folder in Settings \u{2192} Recordings.")));
+                return;
+            }
+        }
         let _ = std::fs::create_dir_all(dir);
     }
     let mut wet = wet.map(|feed| Wet::new(feed, source.rate));
@@ -732,7 +741,15 @@ fn default_folder_from(home: Option<std::ffi::OsString>, music: Option<std::ffi:
     if let Some(music) = music.map(PathBuf::from).filter(|m| m.is_absolute()) {
         return music.join("Audra");
     }
-    std::env::temp_dir().join("Audra")
+    fallback_root().join("Audra")
+}
+
+/// With no home and no music folder: the user's own folder in the temp
+/// folder (`/tmp/audra-<uid>`), never a shared `/tmp/Audra` another user
+/// could make first and read the takes from (security review).
+/// `check_folder` makes sure it's private before a take is written.
+fn fallback_root() -> PathBuf {
+    std::env::temp_dir().join(format!("audra-{}", crate::control::own_uid().unwrap_or(0)))
 }
 
 /// The name of the small file a folder check writes and removes. No take
@@ -744,6 +761,11 @@ const PROBE_NAME: &str = ".audra-write-test";
 /// probe file is really written and removed, so a read-only mount is
 /// caught — a permissions check alone would pass it.
 pub fn check_folder(folder: &Path) -> Result<(), String> {
+    if folder.starts_with(fallback_root()) {
+        if let Err(e) = crate::control::private_dir(&fallback_root()) {
+            return Err(format!("Rec won\u{2019}t save there: {e}. Pick a folder in Settings \u{2192} Recordings."));
+        }
+    }
     // A file where the folder should be: `create_dir_all` would say
     // "already exists", which is a take's own name, not this.
     if folder.is_file() {
@@ -1257,11 +1279,11 @@ mod tests {
         // A home folder: the usual place.
         assert_eq!(default_folder_from(os("/home/someone"), None), PathBuf::from("/home/someone/Music/Audra"));
         // No home folder, no music folder: the temporary folder.
-        assert_eq!(default_folder_from(None, None), std::env::temp_dir().join("Audra"));
+        assert_eq!(default_folder_from(None, None), fallback_root().join("Audra"));
         // An empty home folder is no home folder.
-        assert_eq!(default_folder_from(os(""), None), std::env::temp_dir().join("Audra"));
+        assert_eq!(default_folder_from(os(""), None), fallback_root().join("Audra"));
         // A relative music folder is no music folder.
-        assert_eq!(default_folder_from(None, os("Music")), std::env::temp_dir().join("Audra"));
+        assert_eq!(default_folder_from(None, os("Music")), fallback_root().join("Audra"));
         // An absolute one is used.
         assert_eq!(default_folder_from(None, os("/srv/music")), PathBuf::from("/srv/music/Audra"));
         // Never a relative path, whatever comes in.

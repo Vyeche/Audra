@@ -57,6 +57,12 @@ control() {
 APP="$STAGE/audra"
 install -Dm755 "$BIN" "$APP/usr/bin/audra"
 strip --strip-unneeded "$APP/usr/bin/audra"
+# The builder's home folder must not ship (the path remap above keeps it
+# out; this makes sure, rather than trusting it).
+if strings -a "$APP/usr/bin/audra" | grep -q '/home/'; then
+    echo "build-deb: the binary still holds a /home/ path: not packaging it" >&2
+    exit 1
+fi
 install -Dm644 crates/app/assets/audra.desktop "$APP/usr/share/applications/audra.desktop"
 install -Dm644 crates/app/assets/audra.svg "$APP/usr/share/icons/hicolor/scalable/apps/audra.svg"
 install -Dm644 crates/app/assets/audra-128.png "$APP/usr/share/icons/hicolor/128x128/apps/audra.png"

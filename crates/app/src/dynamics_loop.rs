@@ -423,7 +423,7 @@ fn loopback_args_for(names: Names) -> Vec<String> {
         "--capture-props".into(),
         format!("media.class=Audio/Sink node.name={sink} node.description=\"Audra dynamics (internal)\" {low}"),
         "--playback-props".into(),
-        format!("media.class=Audio/Source node.name={source} node.description=\"{label}\" {low}"),
+        format!("media.class=Audio/Source node.name={source} node.description=\"{}\" {low}", pw_text(label)),
     ]
 }
 
@@ -785,6 +785,15 @@ fn block_peak(l: &[f32], r: Option<&[f32]>) -> f32 {
     r.map_or(m, |r| r.iter().fold(m, |m, v| if v.is_finite() { m.max(v.abs()) } else { m }))
 }
 
+/// A name as it may go inside a PipeWire property's quotes: a quote or a
+/// backslash would end the value and let the rest of a name (a strip's
+/// label, which a shared workspace file can carry) add properties of its
+/// own, say turn the private tap into a playback stream to a speaker. So
+/// those and control characters go, and the length is capped.
+pub(crate) fn pw_text(name: &str) -> String {
+    name.chars().filter(|c| !matches!(c, '"' | '\\') && !c.is_control()).take(64).collect()
+}
+
 /// `pw-loopback`'s arguments for an output's virtual speaker `node` (shown
 /// as `label`) and its private tap, both at the lowest priority so neither
 /// becomes a default device. The tap is a source nothing links to by
@@ -800,9 +809,9 @@ pub(crate) fn out_loopback_args(node: &str, label: &str) -> Vec<String> {
         "--channel-map".into(),
         "[ FL, FR ]".into(),
         "--capture-props".into(),
-        format!("media.class=Audio/Sink node.name={node} node.description=\"{label}\" {low}"),
+        format!("media.class=Audio/Sink node.name={node} node.description=\"{}\" {low}", pw_text(label)),
         "--playback-props".into(),
-        format!("media.class=Audio/Source node.name={node}_tap node.description=\"{label} (internal)\" {low}"),
+        format!("media.class=Audio/Source node.name={node}_tap node.description=\"{} (internal)\" {low}", pw_text(label)),
     ]
 }
 
@@ -1442,5 +1451,22 @@ mod tests {
         let p = unit_play_args(7, 48_000, 14, "audra_out_2").join(" ");
         assert!(p.contains("node.dont-fallback=true") && p.contains("node.dont-move=true") && p.contains("stream.dont-remix=true"), "{p}");
         assert!(p.contains("AUX13"), "every channel by its own position: {p}");
+    }
+}
+
+
+#[cfg(test)]
+mod pw_text_tests {
+    #[test]
+    fn a_name_cant_add_pipewire_properties() {
+        let evil = "Speakers\" media.class=Stream/Output/Audio target.object=alsa_output \\x";
+        let a = super::out_loopback_args("audra_out_2", evil).join(" ");
+        // Two descriptions, each one quoted value: nothing gets out of the
+        // quotes to become a property of its own.
+        assert_eq!(a.matches('"').count(), 4, "{a}");
+        let outside: String = a.split('"').step_by(2).collect();
+        assert!(!outside.contains("Stream") && !outside.contains("target.object"), "{outside}");
+        assert_eq!(super::pw_text("Main\u{7}\"ok\""), "Mainok");
+        assert_eq!(super::pw_text(&"x".repeat(200)).len(), 64);
     }
 }

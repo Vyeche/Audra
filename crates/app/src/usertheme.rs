@@ -151,7 +151,7 @@ pub fn load_dir(dir: &Path) -> (Vec<ThemeEntry>, Vec<String>) {
     let mut problems = Vec::new();
     for path in paths {
         let stem = path.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        let file: ThemeFile = match std::fs::read_to_string(&path)
+        let file: ThemeFile = match crate::prefs::read_capped(&path)
             .map_err(|e| e.to_string())
             .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
         {

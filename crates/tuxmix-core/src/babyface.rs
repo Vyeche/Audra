@@ -3164,6 +3164,7 @@ impl RmeDevice for BabyfacePro {
         // Another number of channels would replace this unit's lists
         // (OpenCode's job 50: the quit's sync and USB's start came this way).
         scene.check_shape(self.inputs.len(), self.playbacks.len(), self.outputs.len())?;
+        scene.check_lists(&self.inputs, &self.playbacks)?;
         let proc_before = (self.settings.output_phase.clone(), self.settings.output_ms.clone());
         let src_ms_before = !self.settings.source_ms.is_empty();
         let width_before = !self.settings.source_width.is_empty();
@@ -3221,7 +3222,9 @@ impl RmeDevice for BabyfacePro {
         }
         self.inputs = inputs;
         self.playbacks = scene.playbacks.clone();
-        self.outputs = scene.outputs.clone();
+        let mut outputs = scene.outputs.clone();
+        Scene::safe_outputs(&mut outputs, &self.outputs);
+        self.outputs = outputs;
         // A pair's balance on both its channels, as this backend keeps it
         // (a scene from the USB backend has it on the left one only).
         for pair in 0..self.playbacks.len() / 2 {
@@ -3242,7 +3245,9 @@ impl RmeDevice for BabyfacePro {
             }
         }
         let fx_return_now = std::mem::take(&mut self.settings.fx_return);
-        self.settings = scene.settings.clone();
+        let mut settings = scene.settings.clone();
+        Scene::safe_settings(&mut settings, &self.settings);
+        self.settings = settings;
         // Re-issue the actual ALSA writes for mute/solo/global toggles —
         // previously this only ever updated the in-memory model above
         // (`self.inputs`/etc.), so loading a scene looked right in the
@@ -3261,7 +3266,10 @@ impl RmeDevice for BabyfacePro {
         for pair in 0..self.profile.output_pair_count() {
             if let Some(out) = scene.outputs.get(pair * 2) {
                 self.set_mute(ChannelId::Output(pair * 2), out.mute)?;
-                let _ = self.set_loopback(pair, out.loopback);
+                // LOOP as adopted (`Scene::safe_outputs`: only ever off),
+                // not as the file had it.
+                let lb = self.outputs.get(pair * 2).is_some_and(|o| o.loopback);
+                let _ = self.set_loopback(pair, lb);
             }
         }
         // Best-effort: `ms_proc`/`an12`/`width`/`fx_send`/`clock_source`

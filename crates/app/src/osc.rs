@@ -339,7 +339,9 @@ impl OscCommand {
             [kind, channel, "gain"] if *kind == "input" => {
                 match (channel.parse::<usize>().ok(), first.and_then(arg_f32)) {
                     (Some(id), Some(db)) => {
-                        vec![OscCommand::Gain(id, db.max(0.0).round() as u32)]
+                        // Clamped here: an infinite or huge value never reaches a backend
+                        // as u32::MAX (the unit's own range clamps it again).
+                        vec![OscCommand::Gain(id, db.clamp(0.0, 100.0).round() as u32)]
                     }
                     _ => vec![],
                 }

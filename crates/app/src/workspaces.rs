@@ -212,13 +212,14 @@ pub fn apply(state: &mut TuxMix, mut ws: Workspace) {
     state.trim_all = ws.trim_all;
     state.trim_strips = ws.trim_strips.into_iter().collect();
     state.no_trim_outputs = ws.no_trim_outputs.into_iter().collect();
-    state.mirrors = ws.mirrors;
+    state.mirrors = crate::mixops::sane_mirrors(state, &ws.mirrors);
     state.scroll_marks = ws.scroll_marks.unwrap_or_default();
     state.prefs_dirty = true;
     state.notice = Some((
         format!("Workspace \"{}\" loaded. Undo (Ctrl+Z) brings the mix back.", ws.name),
         std::time::Instant::now(),
     ));
+    crate::app::add_loop_held_note(state);
     // A stream that lost the voice, said last (critique #112 A P3-1 / Fable
     // A P2-1).
     crate::app::say_stream_lost_voice(state, &voices, "That workspace", "Undo (Ctrl+Z) brings the mix back.");
@@ -245,7 +246,7 @@ pub fn write_file(path: &Path, ws: &Workspace) -> Result<(), String> {
 pub fn read_file(path: &Path) -> Result<Workspace, String> {
     // Plain words, the parser's text to the log (issue #22), as a
     // snapshot file's (`scenes::read_snapshot`).
-    let text = std::fs::read_to_string(path).map_err(|e| match e.kind() {
+    let text = crate::prefs::read_capped(path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => "the file isn't there any more".to_string(),
         std::io::ErrorKind::PermissionDenied => "Audra isn't allowed to read it".to_string(),
         std::io::ErrorKind::InvalidData => "it isn't a text file, so not an Audra workspace".to_string(),

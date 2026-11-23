@@ -1258,7 +1258,21 @@ pub trait RmeDevice {
     /// this to restore only app-level state (channel names). The ones with
     /// no readback keep the default and re-apply everything.
     fn restore_auto_scene(&mut self, scene: &Scene) -> Result<(), Error> {
-        self.apply_scene(scene)
+        self.apply_scene(scene)?;
+        // This is the user's own last state, not a file from someone else:
+        // LOOP and the clock, which `apply_scene` never switches on or
+        // changes from a scene (`Scene::safe_outputs`, `safe_settings`),
+        // come back too, as they were when Audra last closed (the second
+        // security review: on USB they were lost at every start).
+        for pair in 0..self.output_pair_count() {
+            if scene.outputs.get(pair * 2).is_some_and(|o| o.loopback) {
+                let _ = self.set_loopback(pair, true);
+            }
+        }
+        if !scene.settings.clock_source.is_empty() && scene.settings.clock_source != self.settings().clock_source {
+            let _ = self.set_clock_source(&scene.settings.clock_source);
+        }
+        Ok(())
     }
 
     // ── Polling ─────────────────────────────────────────────────

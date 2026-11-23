@@ -27,7 +27,11 @@ import tempfile
 
 # The real Audra by default; AUDRA_CONTROL_SOCKET points elsewhere, e.g. the
 # simulation's audra-mock-control.sock.
-SOCKET = os.environ.get("AUDRA_CONTROL_SOCKET") or os.path.join(os.environ.get("XDG_RUNTIME_DIR", tempfile.gettempdir()), "audra-control.sock")
+# The same place Audra binds it (control::socket_path): the runtime folder,
+# else the user's own private folder in the temp folder, never the shared
+# temp folder itself, where another user could plant a socket.
+_RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or os.path.join(tempfile.gettempdir(), f"audra-{os.getuid()}")
+SOCKET = os.environ.get("AUDRA_CONTROL_SOCKET") or os.path.join(_RUNTIME, "audra-control.sock")
 
 
 def ask(cmd: dict, timeout: float = 10.0) -> dict:

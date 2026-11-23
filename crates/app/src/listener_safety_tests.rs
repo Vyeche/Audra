@@ -2028,3 +2028,249 @@ fn the_page_moves_an_open_mics_reverb_rather_than_releasing_it() {
     assert_eq!(label, "Move it to the headphones");
     assert!(matches!(press, Message::FxMakeHeard(p) if p == main));
 }
+
+#[test]
+fn an_osc_command_for_a_channel_the_unit_hasnt_got_is_dropped() {
+    // Security review: anyone on this computer can send OSC while it's on.
+    // A locked mix used to echo `/input/9999/mute` back and crash on the
+    // channel that isn't there; now it's dropped before anything sees it.
+    use crate::osc::OscCommand;
+    for locked in [false, true] {
+        let mut state = state();
+        state.ui_locked = locked;
+        let before = writes(&state).len();
+        for cmd in [
+            OscCommand::Mute(ChannelId::Input(9999), true),
+            OscCommand::Mute(ChannelId::Playback(usize::MAX), true),
+            OscCommand::Solo(ChannelId::Output(9999), true),
+            OscCommand::Volume(ChannelId::Input(0), 9999, 1.0),
+            OscCommand::Pan(ChannelId::Playback(0), usize::MAX, 0),
+            OscCommand::OutputVolume(9999, 1.0),
+            OscCommand::Gain(9999, 30),
+            OscCommand::Phantom(9999, true),
+            OscCommand::Loopback(9999, true),
+        ] {
+            assert!(!app::osc_in_range(&state, &cmd), "{cmd:?}");
+            let _ = update(&mut state, Message::OscCommand(cmd));
+        }
+        assert_eq!(writes(&state).len(), before, "nothing reached the card");
+    }
+    // A real channel still passes.
+    let state = state();
+    assert!(app::osc_in_range(&state, &OscCommand::Mute(ChannelId::Input(0), true)));
+    assert!(app::osc_in_range(&state, &OscCommand::Volume(ChannelId::Input(0), 0, 0.5)));
+}
+
+#[test]
+fn a_crafted_snapshot_cant_change_what_an_input_is_or_switch_loop_on() {
+    // Security review (high): a snapshot or workspace someone sends could
+    // call AN1 an instrument, so the USB backend wrote its gain in the
+    // instrument's code (about 54 dB on the mic preamp for 9 on screen).
+    // What an input is now always comes from the unit.
+    use tuxmix_core::channel::ChannelType;
+    let mut state = state();
+    let ty = state.device.inputs()[0].channel_type;
+    let max = state.device.inputs()[0].gain_max;
+    let mut scene = state.device.capture_scene();
+    scene.inputs[0].channel_type = if ty == ChannelType::Mic { ChannelType::Instrument } else { ChannelType::Mic };
+    scene.inputs[0].gain_max = Some(999);
+    scene.inputs[0].gain = Some(500);
+    scene.inputs[0].id = 77;
+    // LOOP and the clock, which wait for the user's own presses.
+    let pairs = state.device.outputs().len() / 2;
+    for o in scene.outputs.iter_mut() {
+        o.loopback = true;
+    }
+    let clock = state.device.settings().clock_source.clone();
+    scene.settings.clock_source = "Optical".into();
+    // An EQ past anything the panel allows.
+    if let Some(eq) = scene.inputs[0].eq.as_mut() {
+        eq.bands[0].gain_db = 99.0;
+        eq.bands[1].q = f32::NAN;
+    }
+    app::apply_mix_scene(&mut state, &scene).expect("the scene applies");
+    step_glides(&mut state, 40);
+    let a = &state.device.inputs()[0];
+    assert_eq!(a.channel_type, ty, "the unit's own type");
+    assert_eq!(a.gain_max, max, "the unit's own range");
+    assert_eq!(a.id, 0);
+    if let (Some(g), Some(m)) = (a.gain, max) {
+        assert!(g <= m, "gain {g} over the unit's {m}");
+    }
+    if let Some(eq) = &a.eq {
+        assert!(eq.bands[0].gain_db <= 20.0 && eq.bands[1].q.is_finite(), "{eq:?}");
+    }
+    assert!(state.device.outputs().iter().all(|o| !o.loopback), "LOOP only ever goes off from a file ({pairs} pairs)");
+    assert_eq!(state.device.settings().clock_source, clock, "the clock stays the unit's");
+}
+
+#[test]
+fn a_snapshot_with_the_wrong_number_of_mixes_is_refused_before_any_write() {
+    // Security review: empty level lists crashed the mixer on the next
+    // frame; too-long ones stopped a load half way.
+    for (vols, pans) in [(0usize, 0usize), (99, 99)] {
+        let mut state = state();
+        let mut scene = state.device.capture_scene();
+        scene.inputs[0].volumes = vec![0.5; vols];
+        scene.inputs[0].pans = vec![0; pans];
+        let before = writes(&state).len();
+        assert!(app::apply_mix_scene(&mut state, &scene).is_err(), "{vols} mixes refused");
+        assert_eq!(writes(&state).len(), before, "nothing written");
+        // And the mixer still draws its strips (it indexed the lists).
+        let _ = app::channel_is_muted(&state, ChannelId::Input(0));
+        assert!(!state.device.inputs()[0].volumes.is_empty());
+    }
+}
+
+#[test]
+fn osc_cant_switch_48v_or_loop_on_by_itself() {
+    // Security review: anyone on this computer can send OSC while it's on.
+    // 48V (with its confirmation on, as it is by default) and LOOP wait for
+    // the user's own presses; switching them off from OSC still works.
+    use crate::osc::OscCommand;
+    let mut state = state();
+    assert!(state.confirm_48v);
+    let mic = (0..state.device.inputs().len())
+        .find(|&i| state.device.inputs()[i].channel_type == tuxmix_core::channel::ChannelType::Mic)
+        .expect("a mic input");
+    assert!(!state.device.inputs()[mic].phantom);
+    let _ = update(&mut state, Message::OscCommand(OscCommand::Phantom(mic, true)));
+    let _ = update(&mut state, Message::OscCommand(OscCommand::Phantom(mic, true)));
+    assert!(!state.device.inputs()[mic].phantom, "48V stays off");
+    assert!(state.notice.as_ref().is_some_and(|(t, _)| t.contains("48V")), "and the screen says why");
+    let _ = update(&mut state, Message::OscCommand(OscCommand::Loopback(0, true)));
+    assert!(!state.device.outputs()[0].loopback, "LOOP stays off");
+    // With the confirmation switched off by the user, OSC may switch 48V.
+    state.confirm_48v = false;
+    let _ = update(&mut state, Message::OscCommand(OscCommand::Phantom(mic, true)));
+    assert!(state.device.inputs()[mic].phantom);
+    let _ = update(&mut state, Message::OscCommand(OscCommand::Phantom(mic, false)));
+    assert!(!state.device.inputs()[mic].phantom, "off is always allowed");
+}
+
+#[test]
+fn a_burst_of_small_osc_raises_glides_like_one_big_jump() {
+    // Security review: 22 messages of +5.9 dB, with no tick between them,
+    // took a send from silence to +6 dB at once; only one big jump glided.
+    use crate::osc::OscCommand;
+    let mut state = state();
+    let cid = ChannelId::Input(0);
+    let start = vol(-60.0);
+    let _ = update(&mut state, Message::VolumeChanged(cid, 0, start));
+    let before = writes(&state).len();
+    let mut db = -60.0f32;
+    for _ in 0..22 {
+        db = (db + 5.9).min(6.0);
+        let _ = update(&mut state, Message::OscCommand(OscCommand::Volume(cid, 0, vol(db))));
+    }
+    let burst = writes_since(&state, before);
+    let rise = biggest_rise(&burst, cid, 0, start);
+    assert!(rise <= RAMP_OVER_DB + 0.5, "the burst wrote {rise:.1} dB over the start at once");
+    step_glides(&mut state, 40);
+    let all = writes_since(&state, before);
+    let rise = biggest_rise(&all, cid, 0, start);
+    assert!(rise <= RAMP_OVER_DB + 0.5, "the glide stepped {rise:.1} dB at once");
+
+    // The preamp gain the same way: 11 messages of +6 dB.
+    let mut st = self::state();
+    let mic = (0..st.device.inputs().len())
+        .find(|&i| st.device.inputs()[i].gain.is_some())
+        .expect("an input with gain");
+    let _ = update(&mut st, Message::Gain(mic, 0));
+    let mut g = 0;
+    for _ in 0..11 {
+        g += 6;
+        let _ = update(&mut st, Message::OscCommand(OscCommand::Gain(mic, g)));
+    }
+    let now = st.device.inputs()[mic].gain.unwrap_or(0);
+    assert!(now <= 12, "the burst raised the preamp to {now} dB at once (a glide takes it from there)");
+}
+
+#[test]
+fn a_remote_cant_push_a_running_glides_target_into_one_big_write() {
+    // The second security review (blocker): a glide nearly done, then ten
+    // raises of its target in one frame; the next tick wrote 58 dB at once.
+    // Now no glide write lands more than RAMP_STEP over the fader's level.
+    use crate::osc::OscCommand;
+    for via_midi in [false, true] {
+        let mut state = state();
+        let cid = ChannelId::Input(0);
+        let start = vol(-60.0);
+        let _ = update(&mut state, Message::VolumeChanged(cid, 0, start));
+        let before = writes(&state).len();
+        let send = |state: &mut TuxMix, db: f32| {
+            if via_midi {
+                state.from_remote = true;
+                let _ = update(state, Message::VolumeChanged(cid, 0, vol(db)));
+                state.from_remote = false;
+            } else {
+                let _ = update(state, Message::OscCommand(OscCommand::Volume(cid, 0, vol(db))));
+            }
+        };
+        send(&mut state, -53.5);
+        step_glides(&mut state, 9);
+        let mut db = -53.5f32;
+        for _ in 0..10 {
+            db = (db + 5.9).min(6.0);
+            send(&mut state, db);
+        }
+        step_glides(&mut state, 60);
+        let all = writes_since(&state, before);
+        let rise = biggest_rise(&all, cid, 0, start);
+        assert!(rise <= RAMP_OVER_DB + 0.5, "{} wrote {rise:.1} dB at once", if via_midi { "MIDI" } else { "OSC" });
+        // And it still gets there.
+        let end = state.device.volume(cid, 0).unwrap();
+        assert!((20.0 * end.log10() - 6.0).abs() < 0.6, "ended at {:.1} dB", 20.0 * end.log10());
+    }
+}
+
+#[test]
+fn small_osc_raises_spread_over_mixes_or_pair_sides_dont_add_up() {
+    // The second security review: counted per level, six +5.9 dB messages
+    // to six mixes with Trim Gains on took a send up 35 dB at once, and
+    // alternating a linked output's two sides added 11.8 dB. Now one burst
+    // has one 6 dB budget for every level together; the rest glides.
+    use crate::osc::OscCommand;
+    let db = |v: f32| 20.0 * v.max(1e-6).log10();
+    let mut state = state();
+    state.trim_all = true;
+    let cid = ChannelId::Input(0);
+    let mixes = state.device.inputs()[0].volumes.len();
+    for out in 0..mixes {
+        let _ = update(&mut state, Message::VolumeChanged(cid, out, vol(-40.0)));
+    }
+    for out in 0..mixes {
+        let _ = update(&mut state, Message::OscCommand(OscCommand::Volume(cid, out, vol(-40.0 + 5.9 * (out as f32 + 1.0)))));
+    }
+    for out in 0..mixes {
+        let now = db(state.device.volume(cid, out).unwrap());
+        assert!(now <= -40.0 + RAMP_OVER_DB + 0.5, "mix {out} rose to {now:.1} dB at once");
+    }
+    // Main's two sides, alternately.
+    let mut st = self::state();
+    let _ = update(&mut st, Message::VolumeChanged(ChannelId::Output(0), 0, vol(-40.0)));
+    let _ = update(&mut st, Message::VolumeChanged(ChannelId::Output(1), 1, vol(-40.0)));
+    let mut level = -40.0f32;
+    for i in 0..6 {
+        level += 5.9;
+        let _ = update(&mut st, Message::OscCommand(OscCommand::OutputVolume(i % 2, vol(level))));
+    }
+    for o in 0..2 {
+        let now = db(st.device.outputs()[o].volume);
+        assert!(now <= -40.0 + RAMP_OVER_DB + 0.5, "Main side {o} rose to {now:.1} dB at once");
+    }
+}
+
+#[test]
+fn my_setup_says_when_loop_stays_off() {
+    // Opus's re-check: a recall never switches LOOP on (a file could), and
+    // My setup's own "My setup is back." covered the sentence saying so.
+    let mut state = state();
+    let _ = state.device.set_loopback(0, true);
+    let _ = update(&mut state, Message::MySetupSave);
+    let _ = state.device.set_loopback(0, false);
+    let _ = update(&mut state, Message::MySetupRecall);
+    assert!(!state.device.outputs()[0].loopback, "LOOP stays off");
+    let text = state.notice.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert!(text.contains("My setup is back") && text.contains("LOOP stays off"), "{text}");
+}

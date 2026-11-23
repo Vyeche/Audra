@@ -81,15 +81,20 @@ const ANSWER_IN: Duration = Duration::from_secs(10);
 /// own, so a `--mock --control` run never takes the real instance's socket
 /// over (the harden review).
 pub fn socket_path(mock: bool) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+    runtime_dir().join(if mock { "audra-mock-control.sock" } else { "audra-control.sock" })
+}
+
+/// Where this user's sockets go: the runtime folder, or the user's own
+/// folder in the temp folder (made private by `private_dir` before use).
+pub(crate) fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join(format!("audra-{}", own_uid().unwrap_or(0))));
-    dir.join(if mock { "audra-mock-control.sock" } else { "audra-control.sock" })
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("audra-{}", own_uid().unwrap_or(0))))
 }
 
 /// This process's user id, read from `/proc/self` (no `unsafe`).
-fn own_uid() -> Option<u32> {
+pub(crate) fn own_uid() -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata("/proc/self").ok().map(|m| m.uid())
 }
@@ -99,7 +104,7 @@ fn own_uid() -> Option<u32> {
 /// created 0700, and one that exists must be the user's and closed to
 /// others. In the shared temp folder the socket used to be bound first and
 /// closed after, open to others between (issue #22).
-fn private_dir(dir: &Path) -> Result<(), String> {
+pub(crate) fn private_dir(dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     if std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|v| Path::new(&v) == dir) {
         return Ok(());
@@ -337,7 +342,7 @@ pub fn handle(state: &mut TuxMix, req: Request) -> Task<Message> {
             task
         }
         "screenshot" => {
-            let Some(path) = req.cmd.get("path").and_then(Value::as_str).map(PathBuf::from).filter(|p| p.is_absolute()) else {
+            let Some(path) = req.cmd.get("path").and_then(Value::as_str).map(PathBuf::from).filter(|p| p.is_absolute() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("png"))) else {
                 req.reply.send(json!({"ok": false, "error": "path: an absolute .png path"}));
                 return Task::none();
             };

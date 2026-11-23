@@ -40,7 +40,7 @@ pub fn write_snapshot(path: &std::path::Path, snap: &SnapshotFile) -> Result<(),
 pub fn read_snapshot(path: &std::path::Path) -> Result<SnapshotFile, String> {
     // Said in plain words, the parser's own text to the log (issue #22: a
     // notice read "missing field `inputs`").
-    let text = std::fs::read_to_string(path).map_err(|e| match e.kind() {
+    let text = crate::prefs::read_capped(path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => "the file isn't there any more".to_string(),
         std::io::ErrorKind::PermissionDenied => "Audra isn't allowed to read it".to_string(),
         std::io::ErrorKind::InvalidData => "it isn't a text file, so not an Audra snapshot".to_string(),

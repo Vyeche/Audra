@@ -220,12 +220,12 @@ pub enum Instance {
 }
 
 fn socket_path(mock: bool) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
+    // The same private folder as the control socket's: never a fixed name
+    // in the shared temp folder, where another user could take it first
+    // and make every launch quit as "already running" (security review).
     // The simulation has its own, so a `--mock` window beside the real one
     // (or a test run) never answers for it.
-    dir.join(if mock { "audra-mock.sock" } else { "audra.sock" })
+    crate::control::runtime_dir().join(if mock { "audra-mock.sock" } else { "audra.sock" })
 }
 
 /// Claims the session's single instance. A second launch connects to the
@@ -237,6 +237,14 @@ pub fn claim(mock: bool) -> Instance {
         return Instance::Primary;
     }
     let path = socket_path(mock);
+    if let Some(dir) = path.parent() {
+        if let Err(e) = crate::control::private_dir(dir) {
+            // Not a folder only this user can reach: no single-instance
+            // socket, rather than one others could answer.
+            log::warn!("single instance: {e}");
+            return Instance::Primary;
+        }
+    }
     if let Ok(mut stream) = UnixStream::connect(&path) {
         let _ = stream.write_all(b"show\n");
         return Instance::Secondary;
@@ -257,9 +265,13 @@ pub fn claim(mock: bool) -> Instance {
 }
 
 fn serve(listener: UnixListener) {
+    use std::io::Read;
     for stream in listener.incoming().flatten() {
+        // One short line, read briefly: a client that never ends its line
+        // (or sends an endless one) can't hold the next launch's "show".
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
         let mut line = String::new();
-        if BufReader::new(stream).read_line(&mut line).is_ok() && line.trim() == "show" {
+        if BufReader::new(stream.take(64)).read_line(&mut line).is_ok() && line.trim() == "show" {
             send(TrayEvent::Show);
         }
     }
@@ -285,8 +297,9 @@ fn autostart_entry(exe: &str) -> String {
     format!(
         "[Desktop Entry]\nType=Application\nName=Audra\n\
          Comment=Hardware mixer for the RME Babyface Pro FS, kept in the tray\n\
-         Exec=\"{exe}\" --minimized\nIcon=audra\nTerminal=false\n\
-         X-GNOME-Autostart-enabled=true\n"
+         Exec={} --minimized\nIcon=audra\nTerminal=false\n\
+         X-GNOME-Autostart-enabled=true\n",
+        crate::launcher::exec_quoted(exe)
     )
 }
 

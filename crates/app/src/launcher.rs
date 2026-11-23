@@ -42,7 +42,7 @@ fn icons(data: &Path) -> [(PathBuf, &'static [u8]); 3] {
 /// `exe` quoted for an entry's `Exec` (the Desktop Entry spec: `"`, `` ` ``,
 /// `$` and `\` escaped inside the quotes, the backslash doubled again for
 /// the string type, and `%` as `%%`).
-fn exec_quoted(exe: &str) -> String {
+pub(crate) fn exec_quoted(exe: &str) -> String {
     let mut out = String::from("\"");
     for c in exe.chars() {
         match c {

@@ -31,7 +31,7 @@ To build you need Rust (stable) and, on Debian, Ubuntu or Pop!_OS: `sudo apt ins
 
 ### The safety gate
 
-Audra decides what plays in speakers, headphones and a stream, at what level, with mics that may have phantom power on. A mistake there can mean feedback or a loud burst. So a change to those parts must add or change a test that shows what now plays where. `crates/app/src/listener_safety_tests.rs` has many to copy. The gate watches `fx.rs`, `hearfix.rs`, `control_room`, `setups.rs`, `quick.rs`, the recorder, Voice, resets, the driver crates, and the level and stream code in `app.rs`.
+Audra decides what plays in speakers, headphones and a stream, at what level, with mics that may have phantom power on. A mistake there can mean feedback or a loud burst. So a change to those parts must add or change a test that shows what now plays where. `crates/app/src/listener_safety_tests.rs` has many to copy. The gate watches `fx.rs`, `hearfix.rs`, `control_room`, `setups.rs`, `quick.rs`, the recorder, Voice, resets, the files Audra opens (workspaces, snapshots, mic and EQ presets), the remote controls (OSC, MIDI, Mackie, the control socket), the driver crates, and the level and stream code in `app.rs`.
 
 ### Rules for tests and checks
 
