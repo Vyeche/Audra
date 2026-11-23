@@ -40,7 +40,7 @@ pub(crate) const STRIP_W: f32 = 104.0;
 /// plus the mic line on a hardware input (`mic_band`). A collapsed strip
 /// gives its name and M/S the same band, so its meter starts where its
 /// neighbours' faders do, whatever their length (`StripParams::fader_h`).
-const TOP_BAND_H: f32 = theme::TEXT_MD * 1.3 + crate::widgets::knob::BOX_SIZE + MS_HIT_H + PEAK_BAND + MS_GAP;
+const TOP_BAND_H: f32 = theme::TEXT_MD * 1.3 + 2.0 * TAPE_PAD_Y + crate::widgets::knob::BOX_SIZE + MS_HIT_H + PEAK_BAND + MS_GAP;
 /// The M|S keys' well, as drawn.
 const MS_WELL_H: f32 = 18.0;
 /// The band M|S take in the strip: as tall as a desktop click target
@@ -798,9 +798,54 @@ fn text_w(chars: usize, size: f32) -> f32 {
     chars as f32 * size * 0.56
 }
 
-/// The width a strip's header has for its name, at scale 1.
+/// The width a strip's header has for its name, at scale 1: the strip's
+/// own padding, then the tape's (`TAPE_PAD_X` each side and its 1 px edge).
 fn header_room() -> f32 {
-    STRIP_W - 2.0 * theme::SPACE_MD
+    STRIP_W - 2.0 * theme::SPACE_MD - 2.0 * (TAPE_PAD_X + 1.0)
+}
+
+/// The name's size on its tape: a step under `TEXT_MD`, so "Main 1/2" and a
+/// DIM beside it stay on one line (Fable's review: at 14 px the serif ran
+/// DIM past the tape, and wrapped it would move the row on a Dim press).
+pub(crate) const TAPE_NAME: f32 = 13.0;
+/// A state word's size on its chip on the tape, in the semibold (Fable's
+/// re-review: at 10 px regular, DIM on a light theme read quieter than it
+/// did before the tape).
+pub(crate) const TAPE_STATE: f32 = 11.0;
+/// The tape's padding across, and up and down: none up and down, so the
+/// tape fills the name's line (13 px type in the 18 px line) and no row
+/// grows (a 4 px taller tape lost the second open row at 1600x900).
+pub(crate) const TAPE_PAD_X: f32 = theme::SPACE_TIGHT;
+pub(crate) const TAPE_PAD_Y: f32 = 0.0;
+
+/// The width of `name` in the tape's serif at `size`, a little over the
+/// measured: Shippori Mincho's capitals and figures run wide (about 0.86 em;
+/// "ADAT7/8" measured 80 px at 14), its lower case about 0.5 (i, l, t, f, r
+/// and j 0.3, m and w 0.78; "Main 1/2" measured 61 px at 14), spaces 0.3
+/// and strokes 0.36.
+fn name_w(name: &str, size: f32) -> f32 {
+    name.chars()
+        .map(|c| match c {
+            c if c.is_ascii_uppercase() || c.is_ascii_digit() => 0.86,
+            'i' | 'l' | 'j' | 't' | 'f' | 'r' => 0.30,
+            'm' | 'w' => 0.78,
+            c if c.is_alphabetic() => 0.50,
+            ' ' => 0.30,
+            _ => 0.36,
+        })
+        .sum::<f32>()
+        * size
+}
+
+/// Whether a header tag is a state word (on its dark chip) rather than a
+/// quiet type word (ink on the tape).
+pub(crate) fn is_state_word(tag: &str) -> bool {
+    tag == "DIM" || tag == "PAD" || tag == "LOOP" || state_tag_hint(tag).is_some() || sides_mark_word(tag).is_some()
+}
+
+/// A state word's chip on the tape: the word at `TAPE_STATE` and its padding.
+fn state_chip_w(word: &str) -> f32 {
+    word.chars().count() as f32 * TAPE_STATE * 0.62 + 2.0 * theme::SPACE_TIGHT
 }
 
 /// The type tag a strip's header shows after its name: none for "OUT"
@@ -810,7 +855,9 @@ pub(crate) fn shown_tag(name: &str, type_tag: Option<(&'static str, Color)>) -> 
     let upper = short_label(name).to_ascii_uppercase();
     type_tag
         .map(|(tag, _)| tag)
-        .filter(|tag| *tag != "OUT" && (state_tag_hint(tag).is_some() || !upper.contains(tag)))
+        // Not OUT or PB either: the row's own heading says it (on the tape
+        // "ADAT3/4 PB" ran past its end in the serif).
+        .filter(|tag| *tag != "OUT" && *tag != "PB" && (state_tag_hint(tag).is_some() || !upper.contains(tag)))
 }
 
 /// A tag that says a state the unit is in, not the channel's kind (M/S
@@ -878,11 +925,11 @@ fn sides_mark_word(tag: &str) -> Option<(&str, &'static str)> {
 /// How many lines `name` takes wrapped at word breaks in a strip's header.
 fn wrapped_lines(name: &str) -> u32 {
     let room = header_room();
-    let space = text_w(1, theme::TEXT_MD);
+    let space = name_w(" ", TAPE_NAME);
     let mut lines: u32 = 1;
     let mut line_w = 0.0f32;
     for word in short_label(name).split_whitespace() {
-        let w = text_w(word.chars().count(), theme::TEXT_MD);
+        let w = name_w(word, TAPE_NAME);
         if line_w > 0.0 && line_w + space + w <= room {
             line_w += space + w;
             continue;
@@ -900,8 +947,8 @@ fn wrapped_lines(name: &str) -> u32 {
 
 /// Whether `name` and `tag` fit on one header line.
 fn fits_one_line(name: &str, tag: Option<&str>) -> bool {
-    let name_w = text_w(short_label(name).chars().count(), theme::TEXT_MD);
-    let tag_w = tag.map_or(0.0, |t| theme::SPACE_SM + text_w(t.chars().count(), theme::TEXT_SM));
+    let name_w = name_w(short_label(name), TAPE_NAME);
+    let tag_w = tag.map_or(0.0, |t| theme::SPACE_TIGHT + if is_state_word(t) { state_chip_w(t) } else { text_w(t.chars().count(), theme::TEXT_SM) });
     name_w + tag_w <= header_room()
 }
 
@@ -987,15 +1034,17 @@ fn header_row<'a>(
     scale: f32,
 ) -> Element<'a, Message> {
     if renaming {
-        return text_input(short_label(name), rename_buf)
+        // In the tape's room, so the header keeps its height (Fable's review).
+        let field = text_input(short_label(name), rename_buf)
             .id(crate::app::RENAME_INPUT_ID)
             .on_input(Message::RenameChanged)
             .on_submit(Message::RenameCommit)
             .style(theme::text_input)
             .size(theme::TEXT_SM * scale)
-            .padding([theme::SPACE_TIGHT * scale, theme::SPACE_SM * scale])
-            .width(Length::Fill)
-            .into();
+            .padding([0.0, theme::SPACE_SM * scale])
+            .width(Length::Fill);
+        let h = Length::Fixed(theme::TEXT_MD * 1.3 * f32::from(lines.max(1)) * scale);
+        return container(field).height(h).center_y(h).into();
     }
     // `.wrapping(Wrapping::None)` — without it, a long name ("Instr. 3/4",
     // "ADAT7/8") wraps to two lines partway through the collapse/expand
@@ -1013,11 +1062,14 @@ fn header_row<'a>(
     // carry the channel kind (blue MIC, violet ADAT, ...); the row a strip
     // stands in already says that, and hue is kept for state.
     let tag = shown_tag(name, type_tag);
+    // The name on a strip of label tape, in Audra's serif (the owner's
+    // pick, 2026-11-23).
     let name_text = |wrap: advanced_text::Wrapping| {
         text(label.clone())
-            .font(theme::SANS_BOLD)
-            .size(theme::TEXT_MD * scale)
+            .font(theme::SERIF)
+            .size(TAPE_NAME * scale)
             .wrapping(wrap)
+            .color(theme::TAPE_INK)
     };
     // LOOP (the input's recording is an output's mix now) is live, so coral;
     // the type tags stay quiet.
@@ -1027,14 +1079,15 @@ fn header_row<'a>(
         if let Some((word, side)) = sides_mark_word(tag) {
             // A state word (PAD) keeps its state's colour beside the mark.
             let word_ink = if word == "PAD" { theme::pad_ink() } else if state_tag_hint(word).is_some() { theme::state_mark_ink(theme::accent()) } else { theme::text_sec() };
-            let quiet = text(word).color(word_ink).size(theme::TEXT_SM * scale).wrapping(advanced_text::Wrapping::None);
+            let quiet = text(word).font(theme::SANS_SEMI).color(word_ink).size(TAPE_STATE * scale).wrapping(advanced_text::Wrapping::None);
             let mark = text(side)
                 .font(theme::SANS_SEMI)
                 .color(theme::state_mark_ink(theme::accent()))
-                .size(theme::TEXT_SM * scale)
+                .size(TAPE_STATE * scale)
                 .wrapping(advanced_text::Wrapping::None);
             let tip = state_tag_hint(side).unwrap_or_default().to_string();
-            return row![quiet, hint_text(mark, tip, scale)].spacing(theme::SPACE_SM * scale).align_y(iced::Alignment::Center).into();
+            let pair = row![quiet, hint_text(mark, tip, scale)].spacing(theme::SPACE_TIGHT * scale).align_y(iced::Alignment::Center);
+            return container(pair).style(theme::tape_state_chip).padding([0.0, theme::SPACE_TIGHT * scale]).into();
         }
         // A state the unit is changing (LOOP, M/S, a width) in the live
         // coral, not solo's amber: "M/S" in amber over the M | S keys read
@@ -1054,12 +1107,21 @@ fn header_row<'a>(
             // 3.3:1 on a hovered panel in Solarized).
             theme::readable_on_keys(theme::accent())
         } else {
-            theme::text_sec()
+            theme::TAPE_QUIET
         };
-        let t = text(tag).color(color).size(theme::TEXT_SM * scale).wrapping(advanced_text::Wrapping::None);
-        match state_tag_hint(tag) {
+        let is_state = is_state_word(tag);
+        let size = if is_state { TAPE_STATE } else { theme::TEXT_SM };
+        let t = text(tag).font(if is_state { theme::SANS_SEMI } else { theme::SANS }).color(color).size(size * scale).wrapping(advanced_text::Wrapping::None);
+        // A type word is ink on the tape; a state word keeps its colour on
+        // the dark chip it always had (`theme::tape_state_chip`).
+        let t: Element<'a, Message> = match state_tag_hint(tag) {
             Some(tip) => hint_text(t, tip.to_string(), scale),
             None => t.into(),
+        };
+        if is_state {
+            container(t).style(theme::tape_state_chip).padding([0.0, theme::SPACE_TIGHT * scale]).into()
+        } else {
+            t
         }
     };
     // Name and tag side by side when they fit. Otherwise (`name_lines`) the
@@ -1075,7 +1137,7 @@ fn header_row<'a>(
     // centred.
     let content: Element<'a, Message> = if side_by_side {
         let mut header = row![name_text(advanced_text::Wrapping::None)]
-            .spacing(theme::SPACE_SM * scale)
+            .spacing(theme::SPACE_TIGHT * scale)
             .align_y(iced::Alignment::Center);
         if let Some(tag) = tag {
             header = header.push(tag_text(tag));
@@ -1097,7 +1159,7 @@ fn header_row<'a>(
     let content: Element<'a, Message> = match plain {
         Some(words) => column![
             content,
-            text(words).size(theme::TEXT_SM * scale).color(theme::text_sec()).wrapping(advanced_text::Wrapping::None),
+            text(words).size(theme::TEXT_SM * scale).color(theme::TAPE_QUIET).wrapping(advanced_text::Wrapping::None),
         ]
         .align_x(iced::Alignment::Center)
         .width(Length::Fill)
@@ -1124,11 +1186,14 @@ fn header_row<'a>(
         Some(words) => format!("{}: {words}. Double-click to rename", short_label(name)),
         None => "Double-click to rename".to_string(),
     };
-    container(hint_text(header, tip, scale))
+    let plate = container(hint_text(header, tip, scale))
         .width(Length::Fill)
         .center_x(Length::Fill)
-        .align_y(iced::Alignment::Center)
-        .into()
+        .align_y(iced::Alignment::Center);
+    // One line keeps the line height the strip's sums count (`TOP_BAND_H`:
+    // `TEXT_MD` x 1.3), though the tape's type is a step smaller.
+    let plate = plate.style(theme::tape_plate).padding([TAPE_PAD_Y * scale, TAPE_PAD_X * scale]);
+    if lines <= 1 { plate.height(Length::Fixed(theme::TEXT_MD * 1.3 * scale)).center_y(Length::Fixed(theme::TEXT_MD * 1.3 * scale)).into() } else { plate.into() }
 }
 
 /// A collapsed strip is a glance-only readout, but per the reference
@@ -2742,4 +2807,3 @@ mod tests {
         assert_eq!(side_band_extra(0.75), 6.0, "zoomed out, the strip takes what the band needs");
     }
 }
-

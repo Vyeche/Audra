@@ -14809,6 +14809,8 @@ pub(crate) struct BarOut {
 /// change (job 75).
 /// The window width from which the top bar shows its version label.
 pub(crate) const LABEL_FROM: f32 = 1440.0;
+/// How much wider the view tabs are with their plain words under them.
+const TAB_WORDS_EXTRA: f32 = 84.0;
 
 pub(crate) fn bar_step(i: BarIn, m: &mut BarMemory) -> BarOut {
     const LABEL_BACK: f32 = 120.0;
@@ -15031,6 +15033,13 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
         None => 0.0,
     };
     let fixed = (80.0 + label_w + 232.0 + 3.0 * 28.0 + 5.0 * theme::SPACE_XXL + 2.0 * theme::SPACE_XL + rec_extra) * scale;
+    // Plain words under the tabs (the owner's pick, 2026-11-23), only where
+    // the bar has room for them and the chip's full line beside them
+    // (about 130 px for " · 48 kHz · Internal"): the tabs widen by about
+    // `TAB_WORDS_EXTRA`, and the chip never shortens for them.
+    let bar_room = state.window_width - sidebar_px(state) - 16.0 * scale;
+    let words_fit = bar_room >= fixed + (TAB_WORDS_EXTRA + 130.0) * scale + crate::sidebar::chip_named_room(state, scale);
+    let fixed = if words_fit { fixed + TAB_WORDS_EXTRA * scale } else { fixed };
     // Short of room (the window down toward its 640 px least), the bar
     // gives way before anything is cut (critique #65's capture at 780 px:
     // the chip, Help and the gear ran off the bar's end): first the
@@ -15052,21 +15061,32 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
     let (no_label, bar_tight, chip_room) = (step.no_label, step.bar_tight, step.chip_room);
     let tab_pad = if bar_tight { theme::SPACE_SM } else { theme::SPACE_XL };
     let bar_gap = if bar_tight { theme::SPACE_LG } else { theme::SPACE_XXL };
+    // Each tab with a quiet line of plain words under its name when the bar
+    // has room (`words_fit`).
+    let tab_words = words_fit && !bar_tight;
+    let tab = |name: &'static str, words: &'static str, view: View| {
+        let label: Element<'_, Message> = if tab_words {
+            let on = state.view == view;
+            column![
+                text(name).font(theme::SANS_SEMI).size(theme::TEXT_MD * scale),
+                text(words).size(theme::TEXT_SM * 0.92 * scale).color(if on { theme::on_active() } else { theme::text_sec() }),
+            ]
+            .align_x(iced::Alignment::Center)
+            .into()
+        } else {
+            text(name).font(theme::SANS_SEMI).size(theme::TEXT_MD * scale).into()
+        };
+        iced::widget::button(label)
+            .padding([if tab_words { theme::SPACE_TIGHT } else { theme::SPACE_SM } * scale, tab_pad * scale])
+            .style(theme::tab_toggle(state.view == view))
+            .on_press(Message::SetView(view))
+    };
     let tab_toggle = row![
         // "Quick setup": says what it is for (critique #7, the owner's
         // choice; "Quick" alone read as a faster Mixer).
-        iced::widget::button(text("Quick setup").font(theme::SANS_SEMI).size(theme::TEXT_MD * scale))
-            .padding([theme::SPACE_SM * scale, tab_pad * scale])
-            .style(theme::tab_toggle(state.view == View::Quick))
-            .on_press(Message::SetView(View::Quick)),
-        iced::widget::button(text("Mixer").font(theme::SANS_SEMI).size(theme::TEXT_MD * scale))
-            .padding([theme::SPACE_SM * scale, tab_pad * scale])
-            .style(theme::tab_toggle(state.view == View::Mixer))
-            .on_press(Message::SetView(View::Mixer)),
-        iced::widget::button(text("Matrix").font(theme::SANS_SEMI).size(theme::TEXT_MD * scale))
-            .padding([theme::SPACE_SM * scale, tab_pad * scale])
-            .style(theme::tab_toggle(state.view == View::Matrix))
-            .on_press(Message::SetView(View::Matrix)),
+        tab("Quick setup", "start here", View::Quick),
+        tab("Mixer", "a mix per output", View::Mixer),
+        tab("Matrix", "every route", View::Matrix),
     ]
     .spacing(theme::SPACE_TIGHT);
 
@@ -15540,6 +15560,10 @@ fn row_name_lines(state: &TuxMix, cids: &[ChannelId]) -> u8 {
             // line of its own).
             let pad_room = matches!(cid, ChannelId::Input(i) if state.device.inputs().get(i).is_some_and(|c| c.channel_type == ChannelType::Mic));
             let lines = strip::name_lines(&name, tag);
+            // An output's room for DIM the same way, so a Dim press never
+            // re-lays the row either (Fable's review of the name tape).
+            let dim_room = matches!(cid, ChannelId::Output(i) if i / 2 == state.control_room.assign.main);
+            let lines = if dim_room { lines.max(strip::name_lines(&name, Some("DIM"))) } else { lines };
             if pad_room { lines.max(strip::name_lines(&name, Some("PAD"))) } else { lines }
         })
         .max()
@@ -16565,8 +16589,9 @@ fn refold_for_zoom(state: &mut TuxMix) {
 /// 244 since the room under the M|S keys (`strip::MS_GAP`, 8px); 266
 /// since the peak readout under them (`strip::PEAK_BAND`, 22px); 275
 /// since the room over the value readout (`strip::READOUT_GAP`, 9px).
-/// 278 since the M|S keys' 24px press band (`strip::MS_HIT_H`).
-const ROW_CHROME_H: f32 = 278.0;
+/// 278 since the M|S keys' 24px press band (`strip::MS_HIT_H`). The name's
+/// tape fills the name's line, so it adds nothing (`strip::TAPE_PAD_Y`).
+const ROW_CHROME_H: f32 = 278.0 + 2.0 * crate::widgets::strip::TAPE_PAD_Y;
 
 /// How long the strip faders run (at scale 1) for the window's height.
 /// A short window keeps `strip::FADER_H` and scrolls, since shorter
@@ -17050,8 +17075,10 @@ fn panels_float(state: &TuxMix) -> bool {
 /// nothing bounded it, and a row with two folded strips was never painted
 /// (the critique, 2026-11-04). Stated `Shrink`, the row is its strips'
 /// height and the folded cards stretch to that.
-fn strip_row(row: iced::widget::Row<'_, Message>) -> iced::widget::Row<'_, Message> {
-    row.height(Length::Shrink)
+fn strip_row(row: iced::widget::Row<'_, Message>) -> Element<'_, Message> {
+    // The row's strips set in one desk (the owner's pick, 2026-11-23),
+    // drawn behind them so no strip moves.
+    container(row.height(Length::Shrink)).style(theme::desk_bezel).into()
 }
 
 /// A floating Settings panel's width, in whole strips: the strip's own,
@@ -20317,7 +20344,8 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
     let outputs_strips = container(responsive_row(out_strips, out_width, outputs_w, 2)).width(Length::Fixed(outputs_w));
     // TotalMix's column of Control Room keys beside Main and the Phones.
     let cr_strips: Element<'_, Message> = if crate::control_room::keys_in_mixer(state) {
-        crate::widgets::overhang::lift(row![strip_row(cr_strips), crate::control_room::key_column(state, scale)].spacing(theme::SPACE_MD))
+        // The key column stands on the same desk as Main and the Phones.
+        crate::widgets::overhang::lift(strip_row(cr_strips.push(crate::control_room::key_column(state, scale))))
     } else {
         crate::widgets::overhang::lift(strip_row(cr_strips))
     };

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3 — early preview (2026-11-23)
+
+A Mixer that looks like Audra's own, safer workspaces, and a README that says what Audra adds.
+
+- **A new Mixer look:** each strip's name sits on cream label tape in Audra's serif, the strips stand side by side on one desk, and on wide windows the view tabs say what they're for ("start here", "a mix per output", "every route"). PAD, DIM and LOOP keep their warning colours, and pressing Dim never moves the row.
+- **Workspaces keep what they replace:** loading a workspace file or a quick slot keeps your setup from before, and Workspaces → "Bring back the workspace from before" restores it (press again to undo). A file that doesn't fit the unit is refused before anything changes, Dim, Talkback and Live Mode included, and a file without snapshots or layouts leaves yours alone.
+- **The "where it goes" map** now warns "open mic · can howl" when an open mic's reverb plays in your speakers.
+- **README and wiki:** the README leads with what Audra adds and how it relates to TuxMix, and the pictures and animations show the new look.
+
 ## 0.1.2 — early preview (2026-11-23)
 
 Security and safety fixes from a two-reviewer audit of everything that takes input from outside: files you open, OSC, MIDI, the control socket, the USB connection, and the build and release pipeline.
