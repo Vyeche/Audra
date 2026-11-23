@@ -10,6 +10,8 @@ Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyfa
 
 *Audra's Mixer, editing the headphones' mix. Every picture here is Audra's simulated device with a small studio set up.*
 
+**▶ [Watch the one-minute tour on YouTube](https://youtu.be/bmi1uvr0dZ8)**
+
 ## Early preview
 
 Audra is an **early preview** for people willing to test. The driver and the basic mixer have run on one Babyface Pro FS, but most of what's listed below has only been checked in the simulation (`--mock`, no unit needed) and **has not yet been tried on a real Babyface**.
@@ -317,6 +319,9 @@ Development ran through a local harness with [Guard](https://hol.org/guard) in t
 Reports from people with a Babyface Pro FS are the most useful thing right now. To send a change, run the gauntlet first (`bash tools/checks/totalMix-gauntlet.sh`): [CONTRIBUTING.md](CONTRIBUTING.md) says what it checks, and [AGENTS.md](AGENTS.md) has the rules for AI helpers.
 
 ## Support
+
+Audra is free and GPL licensed, and it will stay that way. If it earns its keep for you and you'd like to say so: **[♥ Sponsor on GitHub](https://github.com/sponsors/Vyeche)**.
+
 
 - **Something wrong, or an idea:** open an issue with the forms (they ask what's needed to reproduce it).
 - **A security problem** (the driver, a crash from a file, a sudden loud sound): see [SECURITY.md](SECURITY.md).
