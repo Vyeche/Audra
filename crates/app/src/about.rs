@@ -323,25 +323,7 @@ fn identity(state: &TuxMix, scale: f32) -> Element<'_, Message> {
     // scrolls away with the mixer. The mock suffix goes: the word right
     // after it already says it, and "(mock) (simulated)" reads like a
     // bug of its own.
-    let model = state
-        .device
-        .model_name()
-        .strip_suffix(" (mock)")
-        .unwrap_or_else(|| state.device.model_name());
-    let device = format!(
-        "Driving {model} ({})",
-        if !state.connected {
-            "disconnected"
-        } else if state.no_device.is_some() {
-            "demo"
-        } else if state.device.is_mock() {
-            "simulated"
-        } else if !state.device.protocol_features() {
-            "class-compliant"
-        } else {
-            "proprietary"
-        },
-    );
+    let device = format!("Driving {}", device_words(state));
 
     // The drawn wordmark as the title (its "A" is the mark), so the card
     // shows one A, not the mark beside a typeset name.
@@ -374,6 +356,22 @@ fn identity(state: &TuxMix, scale: f32) -> Element<'_, Message> {
         text(device)
             .color(theme::text_sec())
             .size(theme::TEXT_SM * scale),
+        // What a tester pastes into the issue form: the lines above plus the
+        // kernel, the system and the driver, with nothing personal in it.
+        crate::keyfocus::reach_press(
+            "bug-details",
+            button(
+                text("Copy these details for a bug report")
+                    .color(theme::accent())
+                    .size(theme::TEXT_SM * scale)
+            )
+            .padding([theme::SPACE_TIGHT * scale, theme::SPACE_SM * scale])
+            .style(theme::plain_button)
+            .on_press(Message::CopyBugDetails)
+            .into(),
+            Some(Message::CopyBugDetails),
+            theme::RADIUS_SM * scale,
+        ),
         crate::keyfocus::reach_press(
             "wiki",
             button(
@@ -505,6 +503,96 @@ pub fn version() -> String {
 /// changes), stamped by `build.rs`.
 pub fn build() -> &'static str {
     env!("AUDRA_BUILD")
+}
+
+/// "Babyface Pro FS (proprietary)": the device and the state it is driven in,
+/// the same words the sidebar chip uses, disconnect included. The mock
+/// suffix goes: "(mock) (simulated)" reads like a bug of its own.
+fn device_words(state: &TuxMix) -> String {
+    let model = state
+        .device
+        .model_name()
+        .strip_suffix(" (mock)")
+        .unwrap_or_else(|| state.device.model_name());
+    let how = if !state.connected {
+        "disconnected"
+    } else if state.no_device.is_some() {
+        "demo"
+    } else if state.device.is_mock() {
+        "simulated"
+    } else if !state.device.protocol_features() {
+        "class-compliant"
+    } else {
+        "proprietary"
+    };
+    format!("{model} ({how})")
+}
+
+/// The text "Copy these details for a bug report" puts on the clipboard:
+/// what the issue form asks for, read from this machine. Only the build,
+/// the device line, the kernel release, the distribution's name and the
+/// driver's version: no user, host, path or serial number.
+pub fn bug_details(state: &TuxMix) -> String {
+    let read = |p: &str| std::fs::read_to_string(p).ok();
+    let kernel = read("/proc/sys/kernel/osrelease");
+    let system = read("/etc/os-release").and_then(|t| os_pretty_name(&t));
+    // The driver sets no MODULE_VERSION; its srcversion (a hash of the
+    // source the module was built from) still tells two builds apart.
+    let driver = read("/sys/module/snd_usb_babyface_pro/version")
+        .or_else(|| read("/sys/module/snd_usb_babyface_pro/srcversion").map(|h| format!("(srcversion {})", h.trim())));
+    let loaded = std::path::Path::new("/sys/module/snd_usb_babyface_pro").exists();
+    bug_details_text(&format!("{} ({})", version(), build()), &device_words(state), kernel.as_deref(), system.as_deref(), driver.as_deref(), loaded)
+}
+
+/// `PRETTY_NAME` from an os-release file, without its quotes.
+fn os_pretty_name(os_release: &str) -> Option<String> {
+    os_release.lines().find_map(|l| l.strip_prefix("PRETTY_NAME=")).map(|v| v.trim().trim_matches('"').to_string()).filter(|v| !v.is_empty())
+}
+
+fn bug_details_text(audra: &str, device: &str, kernel: Option<&str>, system: Option<&str>, driver: Option<&str>, loaded: bool) -> String {
+    let unknown = "unknown";
+    let driver = match (driver.map(str::trim).filter(|v| !v.is_empty()), loaded) {
+        (Some(v), _) => format!("snd-usb-babyface-pro {v}"),
+        // (a srcversion arrives already worded)
+        (None, true) => "snd-usb-babyface-pro (version not reported)".to_string(),
+        (None, false) => "snd-usb-babyface-pro not loaded".to_string(),
+    };
+    format!(
+        "Audra: {audra}\nDevice: {device}\nKernel: {}\nSystem: {}\nDriver: {driver}\n",
+        kernel.map(str::trim).filter(|v| !v.is_empty()).unwrap_or(unknown),
+        system.unwrap_or(unknown),
+    )
+}
+
+#[cfg(test)]
+mod bug_details_tests {
+    use super::{bug_details_text, os_pretty_name};
+
+    #[test]
+    fn the_bug_details_list_what_the_issue_form_asks_and_nothing_personal() {
+        let t = bug_details_text("v0.1.0 alpha \u{b7} build 900 (abc1234)", "Babyface Pro FS (proprietary)", Some("7.2.15-76070215-generic\n"), Some("Pop!_OS 24.04 LTS"), Some("0.2.2\n"), true);
+        assert_eq!(
+            t,
+            "Audra: v0.1.0 alpha \u{b7} build 900 (abc1234)\nDevice: Babyface Pro FS (proprietary)\nKernel: 7.2.15-76070215-generic\nSystem: Pop!_OS 24.04 LTS\nDriver: snd-usb-babyface-pro 0.2.2\n"
+        );
+        assert!(!t.contains("/home") && !t.contains("@"));
+    }
+
+    #[test]
+    fn a_missing_driver_or_file_says_so_plainly() {
+        let t = bug_details_text("v", "Babyface Pro FS (simulated)", None, None, None, false);
+        assert!(t.contains("Kernel: unknown") && t.contains("System: unknown"));
+        assert!(t.contains("Driver: snd-usb-babyface-pro not loaded"));
+        let t = bug_details_text("v", "d", None, None, None, true);
+        assert!(t.contains("version not reported"));
+    }
+
+    #[test]
+    fn the_system_name_comes_from_pretty_name_without_quotes() {
+        let os = "NAME=\"Pop!_OS\"\nVERSION=\"24.04 LTS\"\nPRETTY_NAME=\"Pop!_OS 24.04 LTS\"\nID=pop\n";
+        assert_eq!(os_pretty_name(os).as_deref(), Some("Pop!_OS 24.04 LTS"));
+        assert_eq!(os_pretty_name("ID=x\n"), None);
+    }
 }
 
 #[cfg(test)]
