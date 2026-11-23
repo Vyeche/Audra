@@ -31,13 +31,13 @@ png = "0.17"
 ksni = { version = "0.3.7", features = ["blocking"] }
 # File dialogs (EQ preset import/export) through the desktop portal, which
 # COSMIC provides: no GTK, and zbus is shared with the tray (ksni).
-rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+rfd = { version = "0.16", default-features = false, features = ["xdg-portal", "tokio"] }
 # The desktop's light or dark setting (Settings portal), for "Follow the
 # desktop's light and dark" (`themetime::desktop_scheme`); already in the
 # tree as rfd's own.
 ashpd = { version = "0.11", default-features = false, features = ["tokio"] }
 # MIDI remote control (manual §24) through the ALSA sequencer: the same
 # `alsa` crate tuxmix-core already uses for the mixer (MIT/Apache-2.0).
-alsa = "0.9"
+alsa = "0.12"
 # Local time for the theme by time of day (`themetime`); already in the tree.
 libc = "0.2"

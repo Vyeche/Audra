@@ -208,16 +208,16 @@ impl MockBabyfacePro {
     }
 
     fn update_meters(&mut self) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         self.tick += 1;
 
         for v in &mut self.input_meters {
-            let target = rng.gen_range(0.0..0.95);
+            let target = rng.random_range(0.0..0.95);
             *v += (target - *v) * 0.05;
             *v = v.clamp(0.0, 1.0);
         }
         for v in &mut self.playback_meters {
-            let target = rng.gen_range(0.0..0.85);
+            let target = rng.random_range(0.0..0.85);
             *v += (target - *v) * 0.03;
             *v = v.clamp(0.0, 1.0);
         }

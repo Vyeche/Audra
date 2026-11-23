@@ -10,6 +10,17 @@ updates:
     groups:
       rust-libraries:
         patterns: ["*"]
+    # These follow the copies Audra shares with its toolkit and its file
+    # dialogs: tiny-skia and png with iced's renderer, ashpd with rfd. A newer
+    # one would add a second copy (and for ashpd a second D-Bus stack), so
+    # they move when iced or rfd move. Fixes within a version still come.
+    ignore:
+      - dependency-name: tiny-skia
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: png
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: ashpd
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
