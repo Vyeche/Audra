@@ -12,6 +12,15 @@ pub fn load_scene_file(name: &str) -> Option<Scene> {
     Scene::from_json(&content).ok()
 }
 
+/// Removes a stored snapshot's file (an empty slot), if there is one and
+/// it reads: one that doesn't is left for the user to rescue, since no
+/// backup could have kept it (the review).
+pub fn remove_scene_file(name: &str) {
+    if load_scene_file(name).is_some() {
+        let _ = std::fs::remove_file(scenes_dir().join(format!("{}.json", name)));
+    }
+}
+
 pub fn save_scene_file(name: &str, scene: &Scene) -> Result<(), String> {
     tuxmix_core::scene::write_atomic(
         &scenes_dir().join(format!("{}.json", name)),

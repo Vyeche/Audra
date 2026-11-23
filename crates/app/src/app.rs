@@ -1095,6 +1095,9 @@ pub enum Message {
     /// Second click: loads the slot's workspace.
     WorkspaceLoad(usize),
     WorkspaceOpenFile,
+    /// Brings back the workspace that opening a file replaced
+    /// (`TuxMix::workspace_before`).
+    WorkspaceRestoreBefore,
     /// The Workspaces panel lists all 30 slots, or the stored ones and the
     /// first empty one.
     WorkspacesShowAll(bool),
@@ -2317,6 +2320,16 @@ pub struct TuxMix {
     /// The simulation keeps its quick slots in memory (as its snapshots),
     /// so it never writes the user's workspace files.
     pub mock_workspaces: Vec<Option<crate::workspaces::Workspace>>,
+    /// What opening a workspace file replaced (the mix, the 8 snapshots,
+    /// layouts, presets...), kept so "Bring back the one from before" can
+    /// undo it: a file someone sent overwrote them for good (the security
+    /// review). Also written as "Before last open" beside the quick slots.
+    pub workspace_before: Option<crate::workspaces::Workspace>,
+    /// The start-up mic preset that went with `workspace_before`.
+    pub workspace_before_startup: Option<crate::mic_presets::StartupPreset>,
+    /// Whether the setup now came from a workspace load (so the backup is
+    /// the user's own); false once it is brought back.
+    pub workspace_loaded: bool,
     /// Strips with their own Trim Gains on.
     pub trim_strips: HashSet<ChannelId>,
     /// Output pairs flagged No Trim: Trim Gains never moves their routings.
@@ -3282,6 +3295,9 @@ pub fn new(mock: bool, osc_config: Option<OscConfig>, backend: Option<String>) -
         workspace_name: String::new(),
         workspace_armed: None,
         mock_workspaces: vec![None; crate::workspaces::QUICK_SLOTS],
+        workspace_before: None,
+        workspace_before_startup: None,
+        workspace_loaded: false,
         trim_strips: HashSet::new(),
         no_trim_outputs: Vec::new(),
         window_hidden: false,
@@ -4681,6 +4697,7 @@ fn stored_snapshot_slots(simulated: bool) -> [bool; 8] {
 fn adopt_device(state: &mut TuxMix, device: DeviceHandle) {
     log::info!("Device found");
     state.device = device;
+    crate::workspaces::forget_demo_backup(state);
     state.control_room.dimmed_main = None;
     state.control_room.dim_easing = None;
     state.control_room.easing.clear();
@@ -6799,7 +6816,7 @@ fn locked_out(state: &TuxMix, message: &Message) -> bool {
         Message::ResetMixArm(kind) | Message::ResetMix(kind) => kind.changes_mix(),
         // Loading a workspace replaces the mix, so even arming it or
         // opening a file for it is held.
-        Message::WorkspaceLoadArm(_) | Message::WorkspaceOpenFile => true,
+        Message::WorkspaceLoadArm(_) | Message::WorkspaceOpenFile | Message::WorkspaceRestoreBefore => true,
         // So is opening a snapshot file, which replaces the mix too.
         Message::SnapshotOpenFile => true,
         // Arming 48V is held like switching it, so the first click
@@ -6872,6 +6889,7 @@ fn flips_many(message: &Message) -> bool {
             | Message::Setup(_)
             | Message::SetupUndo
             | Message::WorkspaceLoad(_)
+            | Message::WorkspaceRestoreBefore
             | Message::ResetMix(_)
     )
 }
@@ -10010,7 +10028,7 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 crate::workspaces::load_slot(slot)
             };
             if let Some(ws) = ws {
-                crate::workspaces::apply(state, ws);
+                crate::workspaces::load_keeping_before(state, ws, &format!("loading workspace {}", slot + 1));
                 state.show_workspaces = false;
             }
         }
@@ -10030,7 +10048,8 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
         }
         Message::WorkspaceOpenFrom(Some(path)) => match crate::workspaces::read_file(&path) {
             Ok(ws) => {
-                crate::workspaces::apply(state, ws);
+                let file = path.file_stem().map_or_else(|| "a file".to_string(), |n| n.to_string_lossy().into_owned());
+                crate::workspaces::load_keeping_before(state, ws, &format!("opening {file}"));
                 state.show_workspaces = false;
             }
             Err(e) => {
@@ -10038,6 +10057,10 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 state.notice = Some((format!("Could not open {file}: {e}."), Instant::now()));
             }
         },
+        Message::WorkspaceRestoreBefore => {
+            crate::workspaces::bring_back(state);
+            state.show_workspaces = false;
+        }
         Message::WorkspaceOpenFrom(None) | Message::WorkspaceSaveTo(None) => {}
         Message::WorkspaceSaveFile => {
             let name = match state.workspace_name.trim() {
@@ -13348,9 +13371,16 @@ fn workspaces_panel(state: &TuxMix) -> Element<'_, Message> {
         small("Open a file…".into(), false, theme::accent(), Some(Message::WorkspaceOpenFile)),
     ]
     .spacing(theme::SPACE_MD * scale);
-    let body = column![header, intro, name, slots, show_all, files]
+    let mut body = column![header, intro, name, slots, show_all, files]
         .spacing(theme::SPACE_LG * scale)
         .width(Length::Fill);
+    // After a file was opened: what it replaced, one press away, on a row
+    // of its own under the file keys.
+    if state.workspace_before.is_some() {
+        // After a bring-back the same key swaps back to what was loaded.
+        let label = if state.workspace_loaded { "Bring back the workspace from before" } else { "Undo bringing it back" };
+        body = body.push(small(label.into(), false, theme::accent(), Some(Message::WorkspaceRestoreBefore)));
+    }
     popover(state, body.into(), Message::ToggleWorkspaces)
 }
 

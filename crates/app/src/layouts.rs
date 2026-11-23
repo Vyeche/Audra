@@ -51,6 +51,14 @@ pub fn load_layout_file(slot: u8) -> Option<Layout> {
     parse_layout(&content)
 }
 
+/// Removes a stored layout's file (an empty slot), if there is one and it
+/// reads (as `scenes::remove_scene_file`).
+pub fn remove_layout_file(slot: u8) {
+    if load_layout_file(slot).is_some() {
+        let _ = std::fs::remove_file(layouts_dir().join(format!("Layout {slot}.json")));
+    }
+}
+
 pub fn save_layout_file(slot: u8, layout: &Layout) -> Result<(), String> {
     let json = serde_json::to_string_pretty(layout).map_err(|e| e.to_string())?;
     std::fs::write(layouts_dir().join(format!("Layout {slot}.json")), json)

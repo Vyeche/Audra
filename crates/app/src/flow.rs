@@ -27,10 +27,10 @@ pub enum FlowOf {
 
 /// One path on the card.
 #[derive(Debug, Clone)]
-struct Lane {
+pub(crate) struct Lane {
     label: String,
     /// The level when live, else why it stops.
-    note: String,
+    pub(crate) note: String,
     live: bool,
     /// "+n more": a line of words, no box and no path (critique #26: in a
     /// box it read as one more source).
@@ -115,10 +115,16 @@ fn source_send_db(state: &TuxMix, cid: ChannelId) -> Option<f32> {
 /// (`fx::block_in`): its return's level where they're heard, else why not,
 /// in words that fit a box (the critiques carried "the flow map has no
 /// Reverb & Echo" since #66). None while both are off.
-fn fx_return_lane(state: &TuxMix, p: usize, out_muted: bool) -> Option<Lane> {
+pub(crate) fn fx_return_lane(state: &TuxMix, p: usize, out_muted: bool) -> Option<Lane> {
     use crate::fx::Block;
     if !state.fx.any_on() {
         return None;
+    }
+    // An open mic's reverb up in these speakers is the hazard, said here as
+    // in the placard, in the simulation too (OpenCode's job 84: the map drew
+    // it as a plain live return).
+    if crate::fx::mic_reverb_hazard(state) == Some(p) && !out_muted {
+        return Some(Lane { label: fx_label(state).into(), note: "open mic \u{b7} can howl".into(), live: true, more: false });
     }
     let (live, note) = match crate::fx::block_in(state, p) {
         // The simulation runs no effects: never drawn as playing.
