@@ -1,12 +1,23 @@
-# The gauntlet: every pull request runs these checks. GitHub's branch rule
-# requires only the last job, "audra / required", which passes when every
-# check the plan asked for passed (a skipped one never blocks).
+# The gauntlet: every pull request and every push to main runs these checks,
+# the same as `bash tools/checks/totalMix-gauntlet.sh` locally.
 #
-# Safe for pull requests from forks: plain `pull_request` (never
-# `pull_request_target`), read-only permissions, no secrets, and nothing is
-# checked out with credentials kept.
+#   plan        which lanes a change needs (docs-only changes skip the build)
+#   lint        actionlint over these workflows (expressions, permissions, typos)
+#   hygiene     no secrets, internal files or files over 5 MB
+#   safety      a change to what plays where comes with a test
+#   build-test  build, every test (the speaker, mic and stream safety tests too), Clippy
+#   screenshots the app drawn under a hidden X display, kept as evidence (not a gate)
+#   required    "audra / required": fails if any lane the plan asked for failed. The only
+#               required check on main (Settings, Rules), so new lanes need no settings change
+#   guard       HOL Guard's repository scan, attestation and public verification. Only on
+#               pushes to main, weekly (a verification lasts 7 days) and by hand: it needs
+#               write permissions a fork's pull request never gets, so PRs rely on the rest
 #
-# The same checks run locally: bash tools/checks/totalMix-gauntlet.sh
+# Safety (the pattern from HOL Guard): pull_request (never pull_request_target), so a PR's
+# code runs with a read-only token and no secrets; every action and download is pinned
+# (commit SHA or SHA-256); checkout keeps no credentials; every job has a timeout; a newer
+# push to the same PR cancels the old run; write permissions exist only in the guard job,
+# which never runs PR code.
 
 name: gauntlet
 
@@ -16,35 +27,45 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
+  schedule:
+    - cron: "23 6 * * 1"      # Mondays: keeps HOL Guard's 7-day verification fresh
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: gauntlet-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   # Base for the safety gate and hygiene: the pull request's base branch.
   BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+  ACTIONLINT_VERSION: "1.7.12"
+  # SHA-256 of actionlint_1.7.12_linux_amd64.tar.gz (matches the release's checksums.txt)
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
 
 jobs:
   plan:
     name: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       code: ${{ steps.plan.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - id: plan
         name: Which checks this change needs
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
+          # Pushes to main, the weekly run and a run by hand test everything.
+          if [ "$EVENT" != pull_request ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           git fetch --no-tags origin "$BASE_REF"
           changed=$(git diff --name-only "origin/$BASE_REF"...HEAD)
           echo "$changed"
@@ -55,12 +76,32 @@ jobs:
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
 
+  lint:
+    name: lint (actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint ${{ env.ACTIONLINT_VERSION }} (checksum-pinned)
+        run: |
+          url="https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" "$url"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
   hygiene:
     name: hygiene (secrets, internal files, big files)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -71,8 +112,10 @@ jobs:
     name: safety gate (what plays where needs a test)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -89,8 +132,10 @@ jobs:
     if: needs.plan.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: System libraries
@@ -101,7 +146,7 @@ jobs:
             libxkbcommon-dev libwayland-dev libfontconfig1-dev libdbus-1-dev
       - name: Rust (stable, with Clippy)
         run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
-      - uses: actions/cache@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -122,8 +167,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     continue-on-error: true
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: System libraries
@@ -135,7 +182,7 @@ jobs:
             xvfb xauth libxcursor1 libxrandr2 libxi6 libx11-xcb1 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers libgl1 libegl1
       - name: Rust (stable)
         run: rustup toolchain install stable --profile minimal && rustup default stable
-      - uses: actions/cache@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -144,7 +191,7 @@ jobs:
           key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - run: cargo build --release -p audra --locked
       - run: bash tools/checks/totalMix-gauntlet-shots.sh target/release/audra shots
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
           name: screenshots
@@ -154,13 +201,15 @@ jobs:
   required:
     name: audra / required
     if: always()
-    needs: [plan, hygiene, safety, build-test, screenshots]
+    needs: [plan, lint, hygiene, safety, build-test, screenshots]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions: {}
     steps:
       - name: Every check the plan asked for passed
         env:
           PLAN: ${{ needs.plan.result }}
+          LINT: ${{ needs.lint.result }}
           HYGIENE: ${{ needs.hygiene.result }}
           SAFETY: ${{ needs.safety.result }}
           BUILD: ${{ needs.build-test.result }}
@@ -169,6 +218,7 @@ jobs:
           echo "plan=$PLAN hygiene=$HYGIENE safety=$SAFETY build-test=$BUILD (code changed: $CODE)"
           fail=0
           [ "$PLAN" = success ] || { echo "::error::the plan job failed"; fail=1; }
+          [ "$LINT" = success ] || { echo "::error::lint: actionlint found a problem in the workflows"; fail=1; }
           [ "$HYGIENE" = success ] || { echo "::error::hygiene: see its log (secrets, internal files or big files)"; fail=1; }
           [ "$SAFETY" = success ] || { echo "::error::safety gate: a change to what plays where needs a test"; fail=1; }
           if [ "$CODE" = true ] && [ "$BUILD" != success ]; then
@@ -176,3 +226,22 @@ jobs:
             fail=1
           fi
           exit $fail
+
+  guard:
+    name: HOL Guard (scan, attestation, verification)
+    # Never on pull requests: the scan attests and uploads SARIF, which needs write
+    # permissions a fork's PR doesn't get. Registration on hol.org works through this
+    # reusable workflow, pinned to HOL Guard's release v3.60.0.
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+      security-events: write
+    uses: hashgraph-online/hol-guard/.github/workflows/guarded-repository.yml@e3e98ad8970c974801c3a958bb1014e1882fd0bf  # v3.60.0
+    with:
+      profile: strict-security
+      fail_on_severity: critical
+      upload_sarif: true
+      visibility: public
