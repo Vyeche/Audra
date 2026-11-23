@@ -6,6 +6,10 @@ Audra is built on two community projects by ismail-bahloul: the [`snd-usb-babyfa
 
 > Not affiliated with RME. *TotalMix*, *TotalMix FX*, *Babyface Pro* and *Babyface Pro FS* are trademarks of RME Intelligent Audio Solutions.
 
+![Audra's Mixer, editing the headphone mix: the vocal, room mic and guitar that feed it stand in the warm light](docs/images/mixer-phones.png)
+
+*Audra's Mixer, editing the headphones' mix. Every picture here is Audra's simulated device with a small studio set up.*
+
 ## Early preview
 
 Audra is an **early preview** for people willing to test. The driver and the basic mixer have run on one Babyface Pro FS, but most of what's listed below has only been checked in the simulation (`--mock`, no unit needed) and **has not yet been tried on a real Babyface**.
@@ -39,7 +43,19 @@ Replug the interface (or reboot), turn your speakers and headphones down, and op
 
 **3. Follow Quick setup.** It opens on the first start: your mic, its level, and where you hear it, each ticked off when it's right. Then "What are you doing?" sets up a podcast or call, a headphone mix, recording or streaming in one press. After your first setup, run `sudo alsactl store BabyfacePro` once so the mix survives a replug.
 
+![Quick setup: pressing Podcast or call, then Show me in the Mixer](docs/images/podcast-setup.gif)
+
 The [wiki](https://github.com/Vyeche/Audra/wiki) shows each part with pictures and short animations; [docs/getting-started.md](docs/getting-started.md) has more detail, and [docs/troubleshooting.md](docs/troubleshooting.md) helps when something's off.
+
+## A quick look
+
+| | |
+|---|---|
+| ![Opening Reverb & Echo, Turn on Reverb, then Make it heard](docs/images/reverb-heard.gif) | **Reverb and Echo**, run on the computer through the unit's FX send and return. With an open mic, **Make it heard** puts the reverb in your headphones and keeps it out of the speakers. |
+| ![The open-mic warning opened to its two choices](docs/images/open-mic.gif) | **Safety first.** A mic with 48V on in your speakers can howl: the card at the top right says so in any view, with the one press that fixes it. |
+| ![Audra in its ten colour themes](docs/images/themes.gif) | **Ten colour themes**, High contrast included, a theme that follows the time of day, and themes of your own. |
+
+More in the [wiki's tutorials](https://github.com/Vyeche/Audra/wiki/Tutorials).
 
 ## Status
 
