@@ -1,0 +1,73 @@
+name: Something's wrong
+description: Audra did something it shouldn't, or didn't do what it should.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Audra. It's an early preview and **has not yet been tested on a real Babyface Pro FS**, so every report helps.
+        If it's about sound that could hurt ears or gear (feedback, a sudden loud burst, a mic coming out of the speakers), tick the box below: those go first.
+  - type: checkboxes
+    id: unsafe
+    attributes:
+      label: Sounds wrong or unsafe?
+      options:
+        - label: Feedback (howling), a sudden loud sound, or a mic in the speakers when it shouldn't be
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw or heard.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen
+      description: Number them. Start from opening Audra.
+      placeholder: |
+        1. Open Audra
+        2. Quick setup, press ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Simulation or a real unit?
+      options:
+        - Simulation (no Babyface plugged in)
+        - Real Babyface Pro FS
+        - Real Babyface Pro (the older model)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Audra version
+      description: Shown at the top left (for example "v0.1.0 alpha · build 1467").
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Babyface driver
+      description: The snd-usb-babyface-pro version (`dkms status`), or "none" in the simulation.
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Distribution and version, and the desktop (for example "Pop!_OS 24.04, COSMIC").
+    validations:
+      required: true
+  - type: textarea
+    id: shots
+    attributes:
+      label: Screenshot or log
+      description: Drag a screenshot in if it shows on screen. For a log, run `RUST_LOG=debug audra` and paste the lines around the problem. Please remove your user name, paths and hostnames.

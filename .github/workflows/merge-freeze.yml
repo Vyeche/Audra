@@ -1,0 +1,27 @@
+# A merge freeze for release weeks, as its own clearly named check, so a red
+# mark during a freeze is never mistaken for a fault in the pull request.
+# The maintainer turns it on with the repository variable MERGE_FREEZE=on
+# (Settings, Secrets and variables, Actions, Variables).
+
+name: merge freeze
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    name: merge freeze (maintainer)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          FREEZE: ${{ vars.MERGE_FREEZE }}
+        run: |
+          if [ "$FREEZE" = on ]; then
+            echo "::warning::Merges are paused for a release. Nothing is wrong with this pull request; it can merge when the freeze lifts."
+            exit 1
+          fi
+          echo "No merge freeze."

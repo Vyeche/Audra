@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="189" height="256" viewBox="66 46 124 168">
+  <!-- The Audra mark alone: the "A" with its inset fader-cap crossbar on
+       transparency. Original artwork. -->
+  <defs>
+    <linearGradient id="warm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2a08a"/>
+      <stop offset="1" stop-color="#f7b955"/>
+    </linearGradient>
+  </defs>
+  <path d="M80 200 L128 60 L176 200" fill="none" stroke="url(#warm)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="96" y="141" width="64" height="18" rx="9" fill="#f8eee8"/>
+</svg>

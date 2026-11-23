@@ -1,0 +1,21 @@
+name: An idea
+description: Something you'd like Audra to do.
+labels: ["idea", "triage"]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want to do
+      description: In plain words, the thing you're trying to get done (not how Audra should do it). For example "hear my guitar in my headphones without it going to the stream".
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: What you do now instead
+      description: How you get by today, in Audra, TotalMix on Windows or something else.
+  - type: textarea
+    id: who
+    attributes:
+      label: Who it helps
+      description: You, streamers, podcasters, musicians, people new to audio...

@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tuxmix-core",
+    "crates/tuxmix-usb",
+    "crates/app",
+    "crates/fx",
+]
+# Toolkit trials (one strip in Slint, one in Tauri), built on their own.
+exclude = ["spikes"]
+
+# Imported crates (crates/tuxmix-*) are git subtrees of upstream TuxMix and
+# keep their own manifests; change them only through upstream-friendly
+# commits so `git subtree pull` stays clean.
+
+# iced/wgpu are slow unoptimized; optimize dependencies even in dev builds,
+# keep our own crates at a low level so rebuilds stay quick.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

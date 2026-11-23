@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Audra
+GenericName=Audio Mixer
+Comment=Hardware mixer for the RME Babyface Pro FS on Linux
+Exec=audra
+Icon=audra
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=RME;Babyface;mixer;monitoring;audio interface;

@@ -1,0 +1,43 @@
+[package]
+name = "audra"
+version = "0.1.0"
+edition = "2021"
+description = "Audra: hardware mixer for the RME Babyface Pro FS on Linux, based on the TuxMix GUI"
+license = "GPL-3.0-only"
+
+[features]
+default = ["alsa"]
+# ALSA class-compliant backend (Linux only) — pass-through to tuxmix-core.
+alsa = ["tuxmix-core/alsa"]
+
+[dependencies]
+tuxmix-core = { path = "../tuxmix-core", default-features = false, features = ["usb"] }
+# Audra's own Reverb and Echo (issue #9), run by `fx_loop`.
+audra-fx = { path = "../fx", features = ["serde"] }
+iced = { version = "0.14", features = ["canvas", "tokio", "advanced", "image-without-codecs"] }
+log = "0.4"
+env_logger = "0.11"
+rosc = "0.11"
+tokio = { version = "1", features = ["net", "sync", "macros", "io-util", "time"] }
+# Draws `--screenshot` off screen (`main::capture_offscreen`); already in
+# the tree as iced's own.
+iced_runtime = "0.14"
+# Draws the knobs' round body with exact edge smoothing
+# (`widgets::knob_paint`); already in the tree as iced's own.
+tiny-skia = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+png = "0.17"
+ksni = { version = "0.3.7", features = ["blocking"] }
+# File dialogs (EQ preset import/export) through the desktop portal, which
+# COSMIC provides: no GTK, and zbus is shared with the tray (ksni).
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+# The desktop's light or dark setting (Settings portal), for "Follow the
+# desktop's light and dark" (`themetime::desktop_scheme`); already in the
+# tree as rfd's own.
+ashpd = { version = "0.11", default-features = false, features = ["tokio"] }
+# MIDI remote control (manual §24) through the ALSA sequencer: the same
+# `alsa` crate tuxmix-core already uses for the mixer (MIT/Apache-2.0).
+alsa = "0.9"
+# Local time for the theme by time of day (`themetime`); already in the tree.
+libc = "0.2"

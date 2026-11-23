@@ -1,0 +1,21 @@
+Package: audra
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: @MAINTAINER@
+Installed-Size: @SIZE@
+Section: sound
+Priority: optional
+Depends: libc6, libgcc-s1, libasound2t64 | libasound2, libwayland-client0, libxkbcommon0, libvulkan1 | libegl1
+Recommends: snd-usb-babyface-pro-dkms, pipewire-bin, pulseaudio-utils, xdg-desktop-portal, xdg-utils
+Homepage: https://github.com/Vyeche/Audra
+Description: hardware mixer for the RME Babyface Pro FS
+ Audra controls the onboard DSP mixer of the RME Babyface Pro FS in its
+ regular (proprietary) USB mode: routing and submixes, input gain, 48V and
+ PAD, EQ and low cut, loopback, and a Control Room with Main, Phones, Dim
+ and Talkback. Its layout follows the Windows mixer, TotalMix FX, so people
+ coming from it feel at home; it adds snapshots, workspaces, MIDI and Mackie
+ Control remote control, and OSC.
+ .
+ It needs the snd-usb-babyface-pro kernel driver (the
+ snd-usb-babyface-pro-dkms package). Based on TuxMix by Ismail Bahloul.
+ Not affiliated with or endorsed by RME.

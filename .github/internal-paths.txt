@@ -1,0 +1,13 @@
+# Paths a pull request may not add (the gauntlet's hygiene check): agents'
+# and editors' working state, other people's material, and captures.
+.agent/
+.claude/
+.opencode/
+.omp/
+CLAUDE.md
+.mcp.json
+references/
+docs/*.pdf
+*.pcap
+*.pcapng
+*.kra

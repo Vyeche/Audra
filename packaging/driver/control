@@ -1,0 +1,18 @@
+Package: snd-usb-babyface-pro-dkms
+Version: @VERSION@
+Architecture: all
+Maintainer: @MAINTAINER@
+Installed-Size: @SIZE@
+Section: kernel
+Priority: optional
+Depends: dkms
+Recommends: linux-headers-generic | linux-headers
+Homepage: https://github.com/Vyeche/Audra
+Description: kernel driver for the RME Babyface Pro FS (DKMS)
+ The snd-usb-babyface-pro ALSA driver for the RME Babyface Pro FS in its
+ regular (proprietary) USB mode: audio at the full channel count, and the
+ onboard DSP mixer's controls, which the Audra mixer app uses.
+ .
+ DKMS builds the module when this package is installed and again for each
+ new kernel, as long as that kernel's headers are installed. The driver is
+ by Ismail Bahloul. Not affiliated with or endorsed by RME.

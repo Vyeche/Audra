@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="52 36 152 184">
+  <!-- Tray icon: the mark in ivory with a dark edge, readable on light
+       and dark panels at 16-48 px. Original artwork. -->
+  <path d="M80 200 L128 60 L176 200" fill="none" stroke="#120d12" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M80 200 L128 60 L176 200" fill="none" stroke="#f8eee8" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="94" y="136" width="68" height="28" rx="14" fill="#120d12"/>
+  <rect x="99" y="141" width="58" height="18" rx="9" fill="#f2a08a"/>
+</svg>

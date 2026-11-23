@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Audra app icon: one continuous "A" with a fader-cap crossbar set
+       inside its legs, rose-gold to honey on a deep plum tile. Original artwork. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c2029"/>
+      <stop offset="1" stop-color="#120d12"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.5">
+      <stop offset="0" stop-color="#f2a08a" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#f2a08a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="warm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2a08a"/>
+      <stop offset="1" stop-color="#f7b955"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#tile)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="55.5" fill="none" stroke="#3d3039"/>
+  <circle cx="128" cy="124" r="100" fill="url(#glow)"/>
+  <path d="M80 200 L128 60 L176 200" fill="none" stroke="url(#warm)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="96" y="140" width="64" height="20" rx="10" fill="#f8eee8"/>
+</svg>

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Takes the driver out of DKMS (every kernel) before its source goes.
+set -e
+
+NAME=snd-usb-babyface-pro
+VERSION=@VERSION@
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        if dkms status -m "$NAME" -v "$VERSION" 2>/dev/null | grep -q .; then
+            dkms remove -m "$NAME" -v "$VERSION" --all || true
+        fi
+        ;;
+esac
+
+exit 0

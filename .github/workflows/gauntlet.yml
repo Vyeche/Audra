@@ -1,0 +1,178 @@
+# The gauntlet: every pull request runs these checks. GitHub's branch rule
+# requires only the last job, "audra / required", which passes when every
+# check the plan asked for passed (a skipped one never blocks).
+#
+# Safe for pull requests from forks: plain `pull_request` (never
+# `pull_request_target`), read-only permissions, no secrets, and nothing is
+# checked out with credentials kept.
+#
+# The same checks run locally: bash tools/checks/totalMix-gauntlet.sh
+
+name: gauntlet
+
+on:
+  pull_request:
+    # labeled: the maintainer's "safety: look only" re-runs the gate.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gauntlet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Base for the safety gate and hygiene: the pull request's base branch.
+  BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.plan.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        name: Which checks this change needs
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          changed=$(git diff --name-only "origin/$BASE_REF"...HEAD)
+          echo "$changed"
+          # Docs, pictures and the wiki only: no build, tests or shots.
+          if printf '%s\n' "$changed" | grep -vqE '\.(md|png|jpe?g|svg|txt)$|^docs/'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  hygiene:
+    name: hygiene (secrets, internal files, big files)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: git fetch --no-tags origin "$BASE_REF"
+      - run: bash tools/checks/totalMix-hygiene.sh "origin/$BASE_REF"
+
+  safety:
+    name: safety gate (what plays where needs a test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: git fetch --no-tags origin "$BASE_REF"
+      - run: bash tools/checks/totalMix-safety-gate.sh "origin/$BASE_REF"
+        env:
+          # Only people with triage rights can add labels, so a contributor
+          # can't pass the gate this way on their own.
+          SAFETY_LOOK_ONLY: "${{ contains(github.event.pull_request.labels.*.name, 'safety: look only') }}"
+
+  build-test:
+    name: build, tests and lints
+    needs: plan
+    if: needs.plan.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libasound2-dev libudev-dev \
+            libxkbcommon-dev libwayland-dev libfontconfig1-dev libdbus-1-dev
+      - name: Rust (stable, with Clippy)
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Tests (the speaker, mic and stream safety tests included)
+        run: cargo test --workspace --locked
+      - name: Lints
+        run: bash tools/checks/totalMix-lints.sh
+
+  screenshots:
+    name: screenshots (evidence, not a gate)
+    needs: plan
+    if: needs.plan.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libasound2-dev libudev-dev \
+            libxkbcommon-dev libwayland-dev libfontconfig1-dev libdbus-1-dev \
+            xvfb xauth libxcursor1 libxrandr2 libxi6 libx11-xcb1 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers libgl1 libegl1
+      - name: Rust (stable)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - run: cargo build --release -p audra --locked
+      - run: bash tools/checks/totalMix-gauntlet-shots.sh target/release/audra shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: shots/*.png
+          retention-days: 14
+
+  required:
+    name: audra / required
+    if: always()
+    needs: [plan, hygiene, safety, build-test, screenshots]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every check the plan asked for passed
+        env:
+          PLAN: ${{ needs.plan.result }}
+          HYGIENE: ${{ needs.hygiene.result }}
+          SAFETY: ${{ needs.safety.result }}
+          BUILD: ${{ needs.build-test.result }}
+          CODE: ${{ needs.plan.outputs.code }}
+        run: |
+          echo "plan=$PLAN hygiene=$HYGIENE safety=$SAFETY build-test=$BUILD (code changed: $CODE)"
+          fail=0
+          [ "$PLAN" = success ] || { echo "::error::the plan job failed"; fail=1; }
+          [ "$HYGIENE" = success ] || { echo "::error::hygiene: see its log (secrets, internal files or big files)"; fail=1; }
+          [ "$SAFETY" = success ] || { echo "::error::safety gate: a change to what plays where needs a test"; fail=1; }
+          if [ "$CODE" = true ] && [ "$BUILD" != success ]; then
+            echo "::error::build, tests or lints failed: see that job's log; re-run failed jobs if it timed out"
+            fail=1
+          fi
+          exit $fail

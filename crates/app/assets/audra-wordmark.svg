@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="472" height="128" viewBox="66 46 619 168">
+  <!-- The Audra wordmark: the mark is the "A"; "udra" is drawn in the
+       same rounded monoline stroke (round d bowl, single-storey a), in
+       ivory. Original lettering. -->
+  <defs>
+    <linearGradient id="warm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2a08a"/>
+      <stop offset="1" stop-color="#f7b955"/>
+    </linearGradient>
+  </defs>
+  <path d="M80 200 L128 60 L176 200" fill="none" stroke="url(#warm)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="96" y="141" width="64" height="18" rx="9" fill="#f8eee8"/>
+  <g fill="none" stroke="#f8eee8" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" transform="translate(-8 0)">
+    <path d="M227 104 V160 C227 186 243 200 259 200 C275 200 291 186 291 160 V104 M291 104 V200"/>
+    <circle cx="387" cy="152" r="46"/>
+    <path d="M433 60 V200"/>
+    <path d="M483 104 V200 M483 150 C483 120 499 104 527 104"/>
+    <circle cx="621" cy="152" r="46"/>
+    <path d="M667 104 V200"/>
+  </g>
+</svg>

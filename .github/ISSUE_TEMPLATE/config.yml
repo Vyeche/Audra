@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: How to use Audra
+    url: https://github.com/Vyeche/Audra/wiki
+    about: The how-to wiki, step by step with pictures.
+  - name: Early preview
+    url: https://github.com/Vyeche/Audra#early-preview
+    about: What works, what doesn't yet, and why Audra hasn't been tested on a real Babyface.

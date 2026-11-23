@@ -1,0 +1,8 @@
+# Files brought back into the public copy after the drop list, from the
+# working repo (one path per line).
+tools/checks/totalMix-gauntlet.sh
+tools/checks/totalMix-safety-gate.sh
+tools/checks/totalMix-hygiene.sh
+tools/checks/totalMix-lints.sh
+tools/checks/totalMix-gauntlet-shots.sh
+tools/checks/totalMix-voice-quality.py

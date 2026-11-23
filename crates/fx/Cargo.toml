@@ -1,0 +1,15 @@
+[package]
+name = "audra-fx"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Audra's own Reverb and Echo, run on the host as the Babyface leaves them (manual 21.6)"
+
+[dependencies]
+# Lets Audra save the settings as they are (its gui.json).
+serde = { version = "1", features = ["derive"], optional = true }
+# Noise removal for what others hear: Xiph's RNNoise in pure Rust (BSD-3).
+nnnoiseless = { version = "0.5.2", default-features = false }
+
+[features]
+serde = ["dep:serde"]

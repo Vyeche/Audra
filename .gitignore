@@ -1,0 +1,14 @@
+/target
+
+# RME manuals: keep local, link to rme-audio.de instead of redistributing
+docs/*.pdf
+
+# Python caches from the check scripts
+__pycache__/
+
+# Agent and editor session state (not part of Audra)
+.agent/
+.claude/
+.opencode/
+.omp/
+CLAUDE.md
