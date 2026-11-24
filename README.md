@@ -78,6 +78,8 @@ More in the [wiki's tutorials](https://github.com/Vyeche/Audra/wiki/Tutorials).
 
 Audra began from TuxMix's GUI, and it still runs on TuxMix's device model and USB backend (`crates/tuxmix-core`, `crates/tuxmix-usb`, kept as git subtrees) and on ismail-bahloul's driver. Audra adds its own safety rules for loading a saved mix there, and fixes found along the way go back upstream as pull requests ([TuxMix #69](https://github.com/ismail-bahloul/TuxMix/pull/69) and [#70](https://github.com/ismail-bahloul/TuxMix/pull/70)).
 
+**Which driver Audra ships.** Audra's driver package (`snd-usb-babyface-pro-dkms` on Audra's releases page) is ismail-bahloul's [babyface-pro-linux](https://github.com/ismail-bahloul/babyface-pro-linux) **v0.2.2** (commit `75dff9d`) with changes of Audra's own, each listed in [`driver/CHANGELOG.md`](driver/CHANGELOG.md) under "Unreleased": a 48V fix, crosspoints written only from the driver's cache, Reverb and Echo's FX channels, and more. When you report a driver problem, say which one you installed. Problems with Audra's package belong in Audra's issues, not the original project's.
+
 The window on top has been rebuilt as Audra's own: its look and words, Quick setup, the safety rules, Reverb and Echo, Voice, recording and the guides. The two are separate apps with different aims. Audra's is to guide people through setup and keep mics and levels safe, so it moves on its own track. If Audra is useful to you, TuxMix and the driver made it possible: they deserve a star too.
 
 ## Status
@@ -150,7 +152,7 @@ The steps below do the same by hand.
 
 ## 1. Install the kernel driver
 
-`driver/` holds the driver at v0.2.2. It runs inside the kernel, so read `driver/tools/kernel/*.c` before you install it. From the repo root:
+`driver/` holds the driver: babyface-pro-linux v0.2.2 with Audra's changes (`driver/CHANGELOG.md`). It runs inside the kernel, so read `driver/tools/kernel/*.c` before you install it. From the repo root:
 
 ```sh
 sudo cp -r driver/tools/kernel /usr/src/snd-usb-babyface-pro-0.2.2
