@@ -168,7 +168,7 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
     // The user's hand on the effects (`watch_heard`).
     if matches!(
         message,
-        Message::FxOn(..) | Message::FxSend(_) | Message::SourceFxSend(..) | Message::FxReturn(..) | Message::MuteFxToggle | Message::FxProAudio | Message::FxMakeHeard(_)
+        Message::FxOn(..) | Message::FxSend(_) | Message::SourceFxSend(..) | Message::FxReturn(..) | Message::MuteFxToggle | Message::FxProAudio | Message::FxMakeHeard(_) | Message::FxTurnBackDown
     ) {
         state.fx_touched_at = Some(std::time::Instant::now());
     }
@@ -266,9 +266,13 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
                 if ret <= 0.0 {
                     set_return(state, pair, db_vol(START_RETURN_DB));
                 }
+                remember_made_heard(state, asked, pair, send_raised, ret <= 0.0);
                 return Task::none();
             }
-            let to_db = if ret <= 0.0 { Some(START_RETURN_DB) } else if send_raised { Some(vol_db(ret)) } else { None };
+            // A return still gliding lands where it was going, not where it
+            // had got to (Fable's review of issue #45).
+            let to_db = if ret <= 0.0 { Some(START_RETURN_DB) } else if send_raised { Some(vol_db(target_return(state, pair))) } else { None };
+            remember_made_heard(state, asked, pair, send_raised, ret <= 0.0);
             if let Some(to_db) = to_db {
                 if let Err(e) = state.device.set_fx_return(pair, db_vol(-60.0)) {
                     crate::app::fail(state, "set_fx_return", &e);
@@ -307,6 +311,40 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
                 return Task::none();
             }
             crate::app::say_undoable(state, format!("Made it heard: {what}{why}.{sample} Undo puts it back as it was."), "Put the send and return back (Ctrl+Z)".to_string());
+        }
+        // Make it heard's key pressed again: what it turned up, and only
+        // that, goes back down (the owner, issue #45). Only ever down, at
+        // once, as every turn-down is; never the speakers' return an open
+        // mic's reverb was taken out of.
+        Message::FxTurnBackDown => {
+            let Some(m) = made_heard_up(state) else { return Task::none() };
+            if !turn_down_ready(state) {
+                return Task::none();
+            }
+            state.made_heard = None;
+            let mix = crate::sidebar::mix_said_s(state, m.pair);
+            let mut what = Vec::new();
+            if m.ret && target_return(state, m.pair) > 0.0 {
+                set_return(state, m.pair, 0.0);
+                state.prefs_dirty = true;
+                what.push(format!("{mix} FX return is off"));
+            }
+            if m.send && send_db(state) > OFF_DB {
+                state.prefs_dirty = true;
+                sync_send_follow(state);
+                if let Err(e) = state.device.set_fx_send(OFF_DB) {
+                    crate::app::fail(state, "set_fx_send", &e);
+                } else {
+                    what.insert(0, "the mics\u{2019} FX send is down".to_string());
+                }
+            }
+            if !what.is_empty() {
+                crate::app::say_undoable(
+                    state,
+                    format!("Turned back down: {}, as before Make it heard. Undo brings it back.", what.join(" and ")),
+                    "Turn it up again (Ctrl+Z)".to_string(),
+                );
+            }
         }
         // The floating page's × (any page's, `sidebar::page_card_body`).
         Message::FxCardClose => crate::app::close_page_card(state),
@@ -820,6 +858,78 @@ pub fn user_return(state: &TuxMix, pair: usize) -> f32 {
         .unwrap_or_else(|| state.device.settings().fx_return_of(pair))
 }
 
+/// What Make it heard turned up (the owner, issue #45: "If I make a bunch
+/// of changes I have no way of going back"): the mix it was pressed for,
+/// the mix whose return it raised (the headphones' when an open mic kept it
+/// out of the speakers), and whether it raised the send and that return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MadeHeard {
+    pub asked: usize,
+    pub pair: usize,
+    pub send: bool,
+    pub ret: bool,
+    /// When the press came: the key it becomes, under the same pointer,
+    /// waits a moment, so a double-click doesn't undo itself (Opus's review).
+    pub at: Instant,
+}
+
+/// How long "Turn it back down" waits after Make it heard before it acts.
+const TURN_DOWN_ARM: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// A press adds to what an earlier one turned up into the same mix and
+/// never forgets it: a second press that only moved the reverb out of the
+/// speakers left nothing to turn back down (found by the test).
+fn remember_made_heard(state: &mut TuxMix, asked: usize, pair: usize, send: bool, ret: bool) {
+    if !(send || ret) {
+        return;
+    }
+    let prev = state.made_heard.filter(|m| m.pair == pair);
+    state.made_heard = Some(MadeHeard {
+        asked: prev.map_or(asked, |m| m.asked),
+        pair,
+        send: send || prev.is_some_and(|m| m.send),
+        ret: ret || prev.is_some_and(|m| m.ret),
+        at: Instant::now(),
+    });
+}
+
+/// What Make it heard turned up that is still up: its key reads "Turn it
+/// back down" while so. Gone once those levels are down again however
+/// they got there (Undo, a fader, the key), and with another mix.
+pub fn made_heard_up(state: &TuxMix) -> Option<MadeHeard> {
+    let m = state.made_heard?;
+    let send_up = m.send && send_db(state) > OFF_DB;
+    let ret_up = m.ret && target_return(state, m.pair) > 0.0;
+    (send_up || ret_up).then_some(m)
+}
+
+/// Whether Make it heard's key, in its place, reads "Turn it back down"
+/// for the mix being set: pressed there (or moved there from it), still
+/// up, no other key of the page's own standing there (Turn on Reverb,
+/// Release Mute FX, Make it heard, Switch to Pro Audio, the headphones'
+/// keys), and no open mic's reverb in the speakers, now or behind Mute FX
+/// (that press first, always).
+pub fn turn_down_offer(state: &TuxMix) -> bool {
+    let sel = state.sel_out;
+    // Only where the page has no key of its own but the sample's (Fable's
+    // review: it displaced Switch to Pro Audio, the headphones' keys and
+    // Release Mute FX, and the placard then disagreed with the page).
+    let page_free = || status(state).is_none_or(|(_, key, _, _)| key.is_none_or(|(label, _)| matches!(label, "Hear a sample" | "Hear a clap")));
+    made_heard_up(state).is_some_and(|m| (sel == m.asked || sel == m.pair) && page_free())
+        && mic_reverb_hazard(state).is_none()
+        && mute_holds_mic_reverb(state).is_none()
+}
+
+/// Whether a "Turn it back down" press now would lower something: there
+/// is something to, and the arm has passed. Else the press is no change
+/// and opens no undo step (both reviewers, round 2: a double-click pushed
+/// an empty step and took Make it heard's Undo key).
+pub fn turn_down_ready(state: &TuxMix) -> bool {
+    made_heard_up(state).is_some_and(|m| m.at.elapsed() >= TURN_DOWN_ARM)
+}
+
+pub(crate) const TURN_DOWN_TIP: &str = "Turns back down what Make it heard turned up (the FX send, the FX return), and nothing else: press Make it heard again to bring it back";
+
 /// Your FX return into `pair`. While Mute FX holds the pair, it is kept
 /// for later and the pair stays silent.
 pub fn set_return(state: &mut TuxMix, pair: usize, volume: f32) {
@@ -965,8 +1075,23 @@ pub struct ScenePlan {
 pub fn prepare_scene(state: &TuxMix, scene: &tuxmix_core::Scene) -> (tuxmix_core::Scene, ScenePlan) {
     let mut scene = scene.clone();
     let mut plan = ScenePlan::default();
+    // A send the scene raises far (Undo after Turn it back down, a
+    // snapshot): what it feeds comes in on the returns' glide from silence,
+    // as Make it heard brings it in, not in the send's one write (Fable's
+    // review of issue #45).
+    let cur = state.device.settings();
+    let send_rises = scene.settings.fx_send_db.is_some_and(|to| to > cur.fx_send_db.unwrap_or(OFF_DB).max(-60.0) + RAMP_OVER_DB)
+        || scene.settings.source_fx_send.iter().any(|(k, &to)| to > cur.source_fx_send.get(k).copied().unwrap_or(OFF_DB).max(-60.0) + RAMP_OVER_DB);
     if scene.settings.fx_return.is_empty() {
-        return (scene, plan);
+        if !send_rises {
+            return (scene, plan);
+        }
+        // A scene from before the FX return leaves every return as it is;
+        // raising a send, those levels come in on the glide too (Opus's and
+        // Fable's round 2).
+        for pair in 0..state.device.output_pair_count() {
+            scene.settings.keep_fx_return(pair, target_return(state, pair));
+        }
     }
     let muted: Vec<usize> = state.control_room.fx_muted.iter().flatten().map(|&(p, _)| p).collect();
     for pair in 0..state.device.output_pair_count() {
@@ -975,6 +1100,9 @@ pub fn prepare_scene(state: &TuxMix, scene: &tuxmix_core::Scene) -> (tuxmix_core
         if muted.contains(&pair) {
             plan.kept.push((pair, to));
             scene.settings.keep_fx_return(pair, 0.0);
+        } else if send_rises && vol_db(to) > -60.0 + RAMP_OVER_DB {
+            plan.glides.push((pair, -60.0, vol_db(to)));
+            scene.settings.keep_fx_return(pair, db_vol(-60.0).min(now));
         } else if vol_db(to) > vol_db(now) + RAMP_OVER_DB {
             plan.glides.push((pair, vol_db(now).max(-60.0), vol_db(to)));
             scene.settings.keep_fx_return(pair, now);
@@ -1472,6 +1600,12 @@ const TOUCHED_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
 /// only notes it), not on picking another mix (the sound didn't change),
 /// not when the loop comes back up on its own.
 pub fn watch_heard(state: &mut TuxMix) {
+    // What Make it heard turned up, once down again however it got there,
+    // is forgotten: a send raised by hand later isn't its to turn down
+    // (Fable's review of issue #45).
+    if state.made_heard.is_some() && made_heard_up(state).is_none() {
+        state.made_heard = None;
+    }
     // A screenshot holds its moment (`--open fx-heard`).
     if state.capture_burst_t.is_some() {
         return;
@@ -1488,6 +1622,9 @@ pub fn watch_heard(state: &mut TuxMix) {
 
 /// The page's key for the next step, if there is one.
 pub fn status_action(state: &TuxMix) -> Option<Message> {
+    if turn_down_offer(state) {
+        return Some(Message::FxTurnBackDown);
+    }
     status(state).and_then(|(_, action, _, _)| action).map(|(_, message)| message)
 }
 
@@ -1594,6 +1731,45 @@ pub fn page(state: &TuxMix, scale: f32) -> Element<'_, Message> {
             .size(theme::TEXT_SM * scale)
             .color(if attention { theme::attention() } else { theme::text_sec() });
         let mut block = column![words].spacing(theme::SPACE_SM * scale);
+        // Make it heard pressed and still up: its key stays in its place,
+        // lit, and turns it back down (the owner, issue #45: "I think we
+        // need a way to toggle the change"). A sample's key beside it.
+        let turn_down = turn_down_offer(state);
+        let action = if turn_down {
+            let h = 30.0 * scale;
+            let toggle = button(text("Turn it back down").font(theme::SANS_SEMI).size(theme::TEXT_SM * scale).center())
+                .padding([0.0, theme::SPACE_MD * scale])
+                .height(Length::Fixed(h))
+                .style(theme::key_button(true, 0.0, 0.0, h / 2.0))
+                .on_press(Message::FxTurnBackDown);
+            let toggle: Element<'_, Message> = iced::widget::tooltip(
+                crate::keyfocus::ring(toggle.into(), kb(state, CounterItem::FxAction), h / 2.0),
+                container(text(TURN_DOWN_TIP).size(theme::TEXT_SM * scale).color(theme::text_primary()))
+                    .padding(theme::SPACE_SM * scale)
+                    .style(crate::widgets::hint_panel),
+                iced::widget::tooltip::Position::Bottom,
+            )
+            .gap(4.0 * scale)
+            .delay(crate::widgets::hint_delay())
+            .into();
+            let mut keys = row![toggle].spacing(theme::SPACE_SM * scale).align_y(iced::Alignment::Center);
+            if let Some((label @ ("Hear a sample" | "Hear a clap"), message)) = action {
+                let sample: iced::widget::Button<'_, Message> = button(text(label).font(theme::SANS).size(theme::TEXT_SM * scale).center())
+                    .padding([0.0, theme::SPACE_MD * scale])
+                    .height(Length::Fixed(h))
+                    .style(move |t: &iced::Theme, st| {
+                        let mut style = theme::key_button(false, 0.0, 0.0, h / 2.0)(t, st);
+                        style.border = theme::page_key(h / 2.0)(t, st).border;
+                        style
+                    })
+                    .on_press(message);
+                keys = keys.push(crate::widgets::strip::hint(sample, if label == "Hear a clap" { "Plays one clap through the effects, to hear what is on" } else { "Plays a clap on this computer, as it is and then through Reverb and Echo as they are set (quiet, about 3 seconds)" }, scale));
+            }
+            block = block.push(keys);
+            None
+        } else {
+            action
+        };
         if let Some((label, message)) = action {
             // The one thing to do next, as a key like the On keys (the
             // reviewer: a small capsule read as a tag).
@@ -2093,12 +2269,14 @@ fn unit_block(state: &TuxMix, unit: Unit, scale: f32) -> Element<'_, Message> {
     let rec_key = crate::widgets::strip::hint_text(
         crate::keyfocus::ring(rec_key.into(), kb(state, CounterItem::FxRec(unit)), h / 2.0),
         match (in_rec, is_on(state, unit), take) {
-            (false, _, _) => format!("Rec's recordings leave the {name} out; press to record it too"),
+            // What you hear never changes with it (the owner, #41: "I
+            // toggled In Recordings, didn't appear to change anything").
+            (false, _, _) => format!("Rec's recordings leave the {name} out; press to record it too. What you hear stays the same"),
             (true, false, _) => format!("Rec's recordings will hold the {name} once it's on; press to leave it out"),
             // On, not in a take yet: why (OpenCode's job 61: "as you hear
             // it" while nothing was heard; critique #64 A 1: say why).
             (true, true, Err(Some(_))) => format!("Rec's recordings will hold the {name} once you hear it; right now {}. Press to leave it out", crate::app::take_fx_why(state).unwrap_or_default()),
-            (true, true, Err(None)) | (true, true, Ok(())) => format!("Rec's recordings hold the {name} as you hear it; press to leave it out"),
+            (true, true, Err(None)) | (true, true, Ok(())) => format!("Rec's recordings hold the {name} as you hear it; press to leave it out of them. What you hear stays the same"),
         },
         scale,
     );

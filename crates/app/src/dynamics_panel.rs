@@ -95,11 +95,29 @@ pub struct OutDyn {
     pub run: Option<DynLoop>,
     pub retry_at: Option<Instant>,
     pub last_error: Option<String>,
+    /// When the loop was told to fade out before it goes (`CLOSE_FADE`).
+    pub closing_at: Option<Instant>,
+    /// The playback channels the running loop writes: a link or split of
+    /// the pair restarts it (faded) on the new ones (round 3: it stayed mono
+    /// after Main was linked).
+    pub channels: Vec<usize>,
 }
+
+/// How long a loop that's no longer wanted keeps running, faded out (its
+/// Loudness and Room EQ fade over 50 ms, then what waits in the queue
+/// plays), before it goes and apps move to the speakers: dropped at once,
+/// apps landed there as loud as the cuts, trim and headroom had held them
+/// down (the Room EQ review, #29).
+pub const CLOSE_FADE: Duration = Duration::from_millis(250);
+/// On quit, the longest Audra waits for Room EQ to glide flat before the
+/// loops go anyway (cuts give their level back at 75 dB/s per speaker,
+/// narrow bass cuts at half that; the deepest allowed set takes under 5 s,
+/// an ordinary one under 1 s; round 6). Otherwise a loop waits until flat.
+pub const CLOSE_MAX: Duration = Duration::from_secs(6);
 
 impl OutDyn {
     fn new(params: DynamicsParams) -> Self {
-        Self { on: false, params, run: None, retry_at: None, last_error: None }
+        Self { on: false, params, run: None, retry_at: None, last_error: None, closing_at: None, channels: Vec::new() }
     }
 
     /// As the prefs kept it.
@@ -758,10 +776,13 @@ fn set_power(state: &mut TuxMix, cid: ChannelId, on: bool) {
             }
         }
         (ChannelId::Output(_), Some(l)) => {
+            let room = crate::room_eq::keeps(state, l);
             let o = state.dyn_outs.entry(l).or_insert_with(|| OutDyn::new(output_start()));
             o.on = on;
-            if !on {
-                o.run = None;
+            // The loop goes in `ensure`, faded out first (`CLOSE_FADE`);
+            // with Room EQ keeping it, Loudness only fades out of the sound
+            // (`DynLoop::set_voice`).
+            if !on && !room {
                 o.retry_at = None;
                 o.last_error = None;
             }
@@ -794,7 +815,7 @@ pub fn update(state: &mut TuxMix, cid: ChannelId, msg: DynMsg) {
                     crate::sounds::play(s, state.ui_sound_db);
                 }
             };
-            if !armed && in_use(state, l) {
+            if !armed && in_use(state, l) && !crate::room_eq::keeps(state, l) {
                 state.dyn_off_armed = Some((l, Instant::now()));
                 sound(state, crate::sounds::Sound::Arm);
                 return;
@@ -1168,31 +1189,85 @@ pub fn ensure(state: &mut TuxMix) {
         Some(ms) if ms < 80.0 => state.delay_warned = false,
         _ => {}
     }
+    // Room EQ runs in Main's loop (issue #29): it needs the entry even
+    // when Loudness was never opened there.
+    if state.room_eq.on {
+        let main = crate::room_eq::main_left(state);
+        state.dyn_outs.entry(main).or_insert_with(|| OutDyn::new(output_start()));
+    }
+    let rooms: BTreeMap<usize, (bool, audra_fx::room_eq::RoomEqParams)> = state
+        .dyn_outs
+        .keys()
+        .map(|&l| (l, (crate::room_eq::keeps(state, l), crate::room_eq::params_for(state, l))))
+        .collect();
     let names: BTreeMap<usize, String> =
         state.dyn_outs.keys().map(|&l| (l, crate::app::strip_display_name(state, ChannelId::Output(l)))).collect();
     let pairs: BTreeMap<usize, Vec<usize>> = state.dyn_outs.keys().map(|&l| (l, out_pair_of(state, l))).collect();
     let mut said = None;
     for (&l, o) in state.dyn_outs.iter_mut() {
-        let want = o.on && !mock;
+        let (room_keeps, room) = rooms.get(&l).copied().unwrap_or_default();
+        let channels = pairs.get(&l).cloned().unwrap_or_else(|| vec![l]);
+        let moved = o.run.is_some() && o.channels != channels;
+        // An entry for a pair's right half, after the pair was linked: its
+        // channels now lead with the left's, whose own entry writes them, so
+        // this one closes and stays closed (round 4: a split Main's right
+        // Loudness restarted onto Main's channels, a second writer to the
+        // speakers that bypassed Room EQ).
+        let orphan = channels.first().is_some_and(|&first| first != l);
+        let want = (o.on || room_keeps) && !mock && !moved && !orphan;
+        if want {
+            o.closing_at = None;
+        }
         match (want, o.run.as_ref().map(DynLoop::state)) {
-            (false, Some(_)) => o.run = None,
+            // Faded out first (its Loudness and Room EQ are told off just
+            // below), then gone.
+            (false, Some(_)) => {
+                let since = *o.closing_at.get_or_insert_with(Instant::now);
+                // Only once it's flat (or not running at all): no time limit
+                // here, so a deep set's glide is never cut short (round 6:
+                // at a limit, the bass came back as a step). Quitting keeps
+                // its limit (`stop_all`).
+                let flat = o.run.as_ref().is_none_or(DynLoop::idle);
+                if since.elapsed() >= CLOSE_FADE && flat {
+                    o.run = None;
+                    o.closing_at = None;
+                }
+            }
             (true, None) => {
                 if o.retry_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {
                     let name = names.get(&l).cloned().unwrap_or_default();
-                    let channels = pairs.get(&l).cloned().unwrap_or_else(|| vec![l]);
-                    o.run = Some(DynLoop::start_output(channels, format!("audra_out_{l}"), format!("Audra {name}"), o.params));
+                    o.channels = channels.clone();
+                    // Room EQ off at the start, then on just below: it glides
+                    // up rather than starting at its full settings (round 4,
+                    // after a restart).
+                    let start_room = audra_fx::room_eq::RoomEqParams { on: false, ..room };
+                    o.run = Some(DynLoop::start_output_with(channels, format!("audra_out_{l}"), format!("Audra {name}"), o.params, o.on, start_room));
                 }
             }
             (true, Some(DynState::Failed(why))) => {
                 o.run = None;
                 o.retry_at = Some(Instant::now());
                 if o.last_error.as_deref() != Some(why.as_str()) {
-                    said = Some(format!("Loudness on {} stopped: {why} Audra tries again every 10 seconds.", names.get(&l).map_or("an output", String::as_str)));
+                    let what = if o.on { "Loudness" } else { "Room EQ" };
+                    said = Some(format!("{what} on {} stopped: {why} Audra tries again every 10 seconds.", names.get(&l).map_or("an output", String::as_str)));
                     o.last_error = Some(why);
                 }
             }
             (true, Some(DynState::Running)) => o.last_error = None,
             _ => {}
+        }
+        // What the running loop does: Loudness fades in or out of the
+        // sound, Room EQ glides to the page's settings.
+        // A loop on its way out (not wanted, or restarting on new channels)
+        // fades both out first, whatever the settings say.
+        if let Some(run) = o.run.as_ref() {
+            if o.closing_at.is_some() {
+                run.set_voice(false);
+                run.set_room(audra_fx::room_eq::RoomEqParams::default());
+            } else {
+                run.set_voice(o.on);
+                run.set_room(room);
+            }
         }
     }
     if let Some(words) = said {
@@ -1201,6 +1276,12 @@ pub fn ensure(state: &mut TuxMix) {
 }
 
 /// Whether an app plays through output `l`'s virtual speaker now.
+/// Whether apps play to output pair `l`'s virtual speaker now (Room EQ's
+/// switch-off asks first then, as Loudness's does).
+pub(crate) fn speaker_in_use(state: &TuxMix, l: usize) -> bool {
+    in_use(state, l)
+}
+
 fn in_use(state: &TuxMix, l: usize) -> bool {
     state.dyn_outs.get(&l).is_some_and(|o| o.run.as_ref().is_some_and(|r| r.state() == DynState::Running))
         && crate::dynamics_loop::sink_in_use(&format!("audra_out_{l}"))
@@ -1233,6 +1314,20 @@ pub fn quit_worries(state: &TuxMix) -> Vec<String> {
 pub fn stop_all(state: &mut TuxMix) {
     state.dyn_loop = None;
     crate::dynamics_loop::end_virtual_mic();
+    // Each output's loop faded out first (Loudness and Room EQ off), so
+    // apps moving to the speakers don't land louder by the cuts and trim
+    // (round 2 of the Room EQ review), waited for at most `CLOSE_MAX`.
+    let off = audra_fx::room_eq::RoomEqParams::default();
+    for o in state.dyn_outs.values() {
+        if let Some(run) = o.run.as_ref() {
+            run.set_voice(false);
+            run.set_room(off);
+        }
+    }
+    let started = Instant::now();
+    while started.elapsed() < CLOSE_MAX && !state.dyn_outs.values().all(|o| o.run.as_ref().is_none_or(DynLoop::idle)) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
     for o in state.dyn_outs.values_mut() {
         o.run = None;
     }
@@ -1499,6 +1594,10 @@ fn status(state: &TuxMix, cid: ChannelId) -> String {
             return format!("Runs on {name} now (one input at a time): turning it on here moves it.");
         }
         return match cid {
+            // Room EQ keeps the speaker (#29): it's there, untouched by this.
+            ChannelId::Output(_) if crate::room_eq::keeps(state, left_of(state, cid).unwrap_or(usize::MAX)) => {
+                format!("Off: \u{201c}{label}\u{201d} stays for Room EQ; Loudness doesn't shape it.")
+            }
             ChannelId::Output(_) => format!("Off: \u{201c}{label}\u{201d} isn't there; apps play straight to the unit."),
             _ => "Off: apps hear this input as it is.".into(),
         };

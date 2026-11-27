@@ -10,6 +10,7 @@
 //! ```
 
 mod about;
+mod helper;
 mod control;
 mod assist;
 mod autoset;
@@ -46,6 +47,7 @@ mod midi;
 mod osc;
 mod prefs;
 mod quick;
+mod room_eq;
 mod scenes;
 mod setups;
 mod sidebar;
@@ -183,6 +185,13 @@ enum OpenPanel {
     About,
     /// The Workspaces panel (W).
     Workspaces,
+    /// Main's Room EQ page (issue #29), with a few bands set.
+    RoomEq,
+    /// The helper cat beside a tip (`helper.rs`).
+    Helper,
+    /// The helper cat alone in its band: the friendly cards out of the way
+    /// (Tips off), its place and clock from `AUDRA_CAT`.
+    CatBand,
     WorkspacesBefore,
     /// The EQ panel of the first input strip.
     Eq,
@@ -354,6 +363,9 @@ fn parse_open(args: &[String]) -> Option<OpenPanel> {
         Some("device") => Some(OpenPanel::Device),
         Some("about") => Some(OpenPanel::About),
         Some("workspaces") => Some(OpenPanel::Workspaces),
+        Some("room-eq") => Some(OpenPanel::RoomEq),
+        Some("helper") => Some(OpenPanel::Helper),
+        Some("cat-band") => Some(OpenPanel::CatBand),
         Some("workspaces-before") => Some(OpenPanel::WorkspacesBefore),
         Some("eq") => Some(OpenPanel::Eq),
         Some("eq-off") => Some(OpenPanel::EqOff),
@@ -477,7 +489,7 @@ fn parse_open(args: &[String]) -> Option<OpenPanel> {
         Some("kb-about") => Some(OpenPanel::KbAbout),
         Some("kb-store") => Some(OpenPanel::KbStore),
         Some(other) => {
-            eprintln!("Unknown --open value {other:?} (use settings|settings-mixer|settings-monitor|settings-look|settings-remote|settings-app|device|about|workspaces|eq|input|input-in3|playback|output-eq|phones-eq|phones-ms|fx-faders|output|phones|patch-pulse|path-pulse|collapsed|focus|focus-select|tray-ask|kb-counter|kb-panel|kb-matrix|quick-todo|tricks|tricks-about|mute-fx|fx-save|kb-fx|kb-settings|kb-quick|kb-eq|quick-speakers|milestone|milestone-late|guide-step|guide-done|quick-lively|quick-unlit|fx-heard|masters|kb-page|kb-about|kb-store|sides-apart|talkback-on|pad-off|pad-on|pad-folded|open-mic-seen|take-saved|fx-key|dim-on|mix-phones), opening none");
+            eprintln!("Unknown --open value {other:?} (use settings|settings-mixer|settings-monitor|settings-look|settings-remote|settings-app|device|about|workspaces|room-eq|eq|input|input-in3|playback|output-eq|phones-eq|phones-ms|fx-faders|output|phones|patch-pulse|path-pulse|collapsed|focus|focus-select|tray-ask|kb-counter|kb-panel|kb-matrix|quick-todo|tricks|tricks-about|mute-fx|fx-save|kb-fx|kb-settings|kb-quick|kb-eq|quick-speakers|milestone|milestone-late|guide-step|guide-done|quick-lively|quick-unlit|fx-heard|masters|kb-page|kb-about|kb-store|sides-apart|talkback-on|pad-off|pad-on|pad-folded|open-mic-seen|take-saved|fx-key|dim-on|mix-phones), opening none");
             None
         }
         None => None,
@@ -510,6 +522,31 @@ fn open_panel(state: &mut app::TuxMix, panel: OpenPanel) {
         OpenPanel::Device => state.show_device_panel = true,
         OpenPanel::About => state.show_about = true,
         OpenPanel::Workspaces => state.show_workspaces = true,
+        // The made-up bands only in the simulation, never into the unit's
+        // settings (the review: `--open room-eq` on the unit saved them).
+        OpenPanel::RoomEq if !state.device.is_mock() => state.show_room_eq = true,
+        OpenPanel::CatBand => {
+            state.tips = false;
+        }
+        OpenPanel::Helper => {
+            state.trick_card = Some((tricks::Card::Tip("reset"), std::time::Instant::now()));
+        }
+        OpenPanel::RoomEq => {
+            // A room's usual fixes: a bass boom cut, a dip lifted a little,
+            // the nearer (left) speaker delayed and turned down.
+            use crate::room_eq::{update, RoomMsg, Sides};
+            update(state, RoomMsg::Power(true));
+            update(state, RoomMsg::Pick(1));
+            update(state, RoomMsg::Gain(-6.0));
+            update(state, RoomMsg::Freq(110.0));
+            update(state, RoomMsg::Pick(3));
+            update(state, RoomMsg::Gain(2.5));
+            update(state, RoomMsg::Sides(Sides::Left));
+            update(state, RoomMsg::Delay(1.2));
+            update(state, RoomMsg::Trim(-1.5));
+            update(state, RoomMsg::Pick(1));
+            state.show_room_eq = true;
+        }
         // After a file was opened: the key that brings back the one before.
         OpenPanel::WorkspacesBefore => {
             state.workspace_before = Some(crate::workspaces::capture(state, "Before opening Theirs"));

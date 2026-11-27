@@ -90,8 +90,15 @@ pub fn view(state: &TuxMix, cid: ChannelId, scale: f32) -> Option<Element<'_, Me
 }
 
 // Tall enough that the Out labels, at 12 px, keep clear of the frame
-// (critique #80 A 4: 2-3 px at 92).
-const SKETCH_H: f32 = 102.0;
+// (critique #80 A 4: 2-3 px at 92; 106 since the labels sit a common
+// distance under the icons, #42).
+const SKETCH_H: f32 = 106.0;
+/// Every socket's radius (the optical port is as wide), so the icons
+/// read as one set (the owner on #42: "the icons should be sized in the
+/// same way ... some of the icons are smaller or bigger").
+const R: f32 = 8.0;
+/// A socket's name, this far under its icon's centre, in both rows.
+const LABEL_DY: f32 = R + 3.0;
 
 struct Sketch {
     lit: Vec<Socket>,
@@ -148,7 +155,7 @@ impl<M> canvas::Program<M> for Sketch {
             let stroke = Stroke::default().with_color(ink(on)).with_width(if on { 2.5 * s } else { 1.5 * s });
             match sock {
                 Socket::Combo1 | Socket::Combo2 | Socket::XlrOut => {
-                    let r = if matches!(sock, Socket::XlrOut) { 7.0 } else { 9.0 } * s;
+                    let r = R * s;
                     let disc = Path::circle(c, r);
                     if on {
                         frame.fill(&disc, lit_fill);
@@ -160,8 +167,9 @@ impl<M> canvas::Program<M> for Sketch {
                     }
                 }
                 Socket::Phones => {
-                    // Two jacks, a large and a small one, side by side.
-                    for (dx, r) in [(-8.0, 6.0), (7.0, 4.5)] {
+                    // Two jacks side by side, each a jack's size.
+                    for dx in [-(R + 2.0), R + 2.0] {
+                        let r = R;
                         let at = Point::new(c.x + dx * s, c.y);
                         let ring = Path::circle(at, r * s);
                         if on {
@@ -172,15 +180,15 @@ impl<M> canvas::Program<M> for Sketch {
                     }
                 }
                 Socket::Inst3 | Socket::Inst4 => {
-                    let ring = Path::circle(c, 6.0 * s);
+                    let ring = Path::circle(c, R * s);
                     if on {
                         frame.fill(&ring, lit_fill);
                     }
                     frame.stroke(&ring, stroke);
-                    frame.fill(&Path::circle(c, 2.2 * s), dot(on));
+                    frame.fill(&Path::circle(c, (R * 0.36) * s), dot(on));
                 }
                 Socket::OpticalIn | Socket::OpticalOut => {
-                    let port = Path::rounded_rectangle(Point::new(c.x - 7.0 * s, c.y - 5.5 * s), Size::new(14.0 * s, 11.0 * s), (2.0 * s).into());
+                    let port = Path::rounded_rectangle(Point::new(c.x - R * s, c.y - 0.75 * R * s), Size::new(2.0 * R * s, 1.5 * R * s), (2.0 * s).into());
                     if on {
                         frame.fill(&port, lit_fill);
                     }
@@ -201,14 +209,17 @@ impl<M> canvas::Program<M> for Sketch {
         for (k, (sock, name)) in ins.iter().enumerate() {
             let x = left + span * in_at[k];
             draw(&mut frame, *sock, Point::new(x, in_y));
-            label(&mut frame, x, in_y + 11.0 * s, name, self.lit.contains(sock));
+            label(&mut frame, x, in_y + LABEL_DY * s, name, self.lit.contains(sock));
         }
         let outs = [(Socket::XlrOut, "XLR 1/2"), (Socket::Phones, "Phones"), (Socket::OpticalOut, "Optical")];
-        let out_at = [0.14, 0.50, 0.88];
+        // Each under its inputs: XLR between AN1 and AN2, Phones between
+        // IN3 and IN4, Optical under Optical (the owner: "the alignment is
+        // off").
+        let out_at = [(in_at[0] + in_at[1]) / 2.0, (in_at[2] + in_at[3]) / 2.0, in_at[4]];
         for (k, (sock, name)) in outs.iter().enumerate() {
             let x = left + span * out_at[k];
             draw(&mut frame, *sock, Point::new(x, out_y));
-            label(&mut frame, x, out_y + 9.0 * s, name, self.lit.contains(sock));
+            label(&mut frame, x, out_y + LABEL_DY * s, name, self.lit.contains(sock));
         }
         vec![frame.into_geometry()]
     }

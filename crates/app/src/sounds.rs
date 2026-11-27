@@ -83,6 +83,14 @@ pub enum Sound {
     /// closes and up as it opens, under the view's pop (it tapped both
     /// ways; 2026-11-15).
     Fold(bool),
+    /// The helper cat poked: a short, soft "mew" rising then falling, a
+    /// voice of a few harmonics through a vowel that opens and closes.
+    Meow,
+    /// The helper cat picked up: a low, soft purr, pulsing about 25 times
+    /// a second.
+    Purr,
+    /// The helper cat popping up somewhere: a tiny chirp gliding up.
+    Chirp,
 }
 
 /// The sounds the Look page's "Hear them" row plays, with their names.
@@ -200,6 +208,9 @@ impl Sound {
             Sound::Clip => tock(Tock { ring: 1000.0, q: 1.6, decay: 0.003, body: 160.0, body_level: 0.12, peak: 0.34 }),
             // E5 to G5, in the chimes' C pentatonic.
             Sound::Recall => finish(overlay(note(659.0, 664.0, 0.04, 0.014), note(784.0, 790.0, 0.045, 0.016), 0.05), 0.36),
+            Sound::Meow => meow(),
+            Sound::Purr => purr(),
+            Sound::Chirp => chirp(),
             Sound::Rise(step) => {
                 let three = overlay(
                     overlay(bell(pentatonic(step)), bell(pentatonic(step + 1)), 0.075),
@@ -210,6 +221,71 @@ impl Sound {
             }
         }
     }
+}
+
+/// The cat's voice: harmonics of a pitch that follows `pitch(t)` (Hz),
+/// each weighted by how near it is to a vowel resonance at `formant(t)`,
+/// under `env(t)`; `len` seconds, peak `peak`.
+fn voice(len: f32, peak: f32, pitch: impl Fn(f32) -> f32, formant: impl Fn(f32) -> f32, env: impl Fn(f32) -> f32) -> Vec<f32> {
+    let n = (len * RATE) as usize;
+    let mut phase = 0.0f32;
+    let mut out: Vec<f32> = (0..n)
+        .map(|i| {
+            let t = i as f32 / RATE;
+            let u = t / len;
+            let f = pitch(u);
+            phase += std::f32::consts::TAU * f / RATE;
+            let fm = formant(u);
+            let mut v = 0.0;
+            for k in 1..=6 {
+                let fk = f * k as f32;
+                let w = (-((fk - fm) / 450.0).powi(2)).exp() + 0.25 / k as f32;
+                v += w * (phase * k as f32).sin();
+            }
+            v * env(u)
+        })
+        .collect();
+    let max = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    if max > 0.0 {
+        for v in &mut out {
+            *v *= peak / max;
+        }
+    }
+    out
+}
+
+/// A soft "mew": up from 620 Hz to 880 and down to 520, the vowel opening
+/// from "m" to "ow" and closing again; 0.38 s.
+fn meow() -> Vec<f32> {
+    voice(
+        0.38,
+        // Level with a milestone's notes (measured: at 0.3 it was 10 dB
+        // over them, the loudest sound in Audra).
+        0.1,
+        |u| if u < 0.3 { 620.0 + 260.0 * (u / 0.3) } else { 880.0 - 360.0 * ((u - 0.3) / 0.7) },
+        |u| 900.0 + 700.0 * (std::f32::consts::PI * u).sin(),
+        |u| (u / 0.06).min(1.0) * ((1.0 - u) / 0.3).min(1.0),
+    )
+}
+
+/// A soft purr: a low voice at 120 Hz, its level pulsing 25 times a
+/// second, fading in and out; 0.7 s.
+fn purr() -> Vec<f32> {
+    voice(
+        0.7,
+        0.15,
+        |_| 120.0,
+        |_| 360.0,
+        |u| {
+            let pulse = 0.55 + 0.45 * (std::f32::consts::TAU * 25.0 * u * 0.7).sin().abs();
+            pulse * (u / 0.15).min(1.0) * ((1.0 - u) / 0.25).min(1.0)
+        },
+    )
+}
+
+/// A tiny chirp: 900 Hz gliding up to 1500, 0.13 s.
+fn chirp() -> Vec<f32> {
+    voice(0.13, 0.13, |u| 900.0 + 600.0 * u, |u| 1600.0 + 400.0 * u, |u| (u / 0.1).min(1.0) * ((1.0 - u) / 0.4).min(1.0))
 }
 
 /// `second` laid over `first`, `gap` seconds in.
@@ -555,6 +631,9 @@ pub fn for_message(state: &TuxMix, message: &Message) -> Option<Sound> {
             Some(false) => Sound::Move,
             None => Sound::Nope,
         }),
+        // Room EQ's page (#29): its switches tick, its picks tap, a
+        // switch-off that only asks arms; its knobs' drags are silent.
+        Message::RoomEq(m) => crate::room_eq::sound(state, m),
         // A problem fixed is a real win, and "Heads up" never fires in the
         // simulation (the scout).
         Message::AssistFix(_) => Some(Sound::Done),
@@ -563,6 +642,16 @@ pub fn for_message(state: &TuxMix, message: &Message) -> Option<Sound> {
         // stay silent, as they are not presses.
         message if is_press(message) => Some(Sound::Tap),
         _ => None,
+    }
+}
+
+/// A switch row's press (`switched`: turning it on or off) ticks On or
+/// Off where its message alone would tap or say nothing; a sound of its
+/// own (48V's armed ticks, a refusal, a keep) is kept.
+pub fn for_switch(switched: Option<bool>, sound: Option<Sound>) -> Option<Sound> {
+    match (switched, sound) {
+        (Some(on), None | Some(Sound::Tap)) => Some(if on { Sound::On } else { Sound::Off }),
+        (_, sound) => sound,
     }
 }
 
@@ -599,6 +688,7 @@ fn is_press(message: &Message) -> bool {
         message,
         Message::SetView(_)
             | Message::SidebarTab(_)
+            | Message::SidebarTabOpen(_)
             | Message::ToggleSettings
             | Message::SettingsPage(_)
             | Message::SettingsResetOpen(_)
@@ -606,6 +696,7 @@ fn is_press(message: &Message) -> bool {
             | Message::ToggleDevicePanel
             | Message::ToggleAbout
             | Message::ToggleWorkspaces
+            | Message::ToggleRoomEq
             | Message::ToggleSidebar
             | Message::SetRowMode(_)
             | Message::SetExclusiveSolo(_)
@@ -777,7 +868,7 @@ pub fn play(sound: Sound, volume_db: f32) {
     if UNAVAILABLE.load(Ordering::Relaxed) || QUIET.load(Ordering::Relaxed) {
         return;
     }
-    if ON_AIR.load(Ordering::Relaxed) && matches!(sound, Sound::Chime(_) | Sound::Rise(_) | Sound::Clip) {
+    if ON_AIR.load(Ordering::Relaxed) && matches!(sound, Sound::Chime(_) | Sound::Rise(_) | Sound::Clip | Sound::Meow | Sound::Purr | Sound::Chirp) {
         return;
     }
     let now = SystemTime::now()
@@ -881,6 +972,7 @@ mod tests {
         .chain((0..8).map(|k| (format!("chime{k}"), Sound::Chime(k))))
         .chain((0..8).map(|k| (format!("rise{k}"), Sound::Rise(k))))
         .chain([("fold".to_string(), Sound::Fold(true)), ("unfold".to_string(), Sound::Fold(false))])
+        .chain([("meow".to_string(), Sound::Meow), ("purr".to_string(), Sound::Purr), ("chirp".to_string(), Sound::Chirp)])
         .collect();
         for (name, sound) in all {
             let x = sound.samples();
@@ -1108,6 +1200,36 @@ mod tests {
         let good = dir.join("audra-save-sound-test.json");
         assert_eq!(heard(good.clone()), vec![Sound::Done]);
         let _ = std::fs::remove_file(good);
+    }
+
+    #[test]
+    fn switches_tick_on_and_off() {
+        // The owner, 2026-11-24: "switches dont make sounds when i toggle
+        // them". A switch row's press ticks as a lamp key does.
+        let heard = |state: &mut crate::app::TuxMix, message: Message| {
+            TEST_HEARD.with(|h| h.borrow_mut().clear());
+            let _ = crate::app::update(state, message);
+            TEST_HEARD.with(|h| h.borrow().clone())
+        };
+        let switched = |on: bool, m: Message| Message::Switched(on, Box::new(m));
+        let mut state = crate::app::new(true, None, None);
+        state.ui_sounds = true;
+        // One that only tapped, and one that said nothing.
+        assert_eq!(heard(&mut state, switched(true, Message::SetMeterRms(true))), vec![Sound::On]);
+        assert_eq!(heard(&mut state, switched(false, Message::SetMeterRms(false))), vec![Sound::Off]);
+        assert_eq!(heard(&mut state, switched(false, Message::SetTips(false))), vec![Sound::Off]);
+        assert_eq!(heard(&mut state, switched(true, Message::SetTips(true))), vec![Sound::On]);
+        // The sounds' own switch: Off as they go, one On as they come back.
+        assert_eq!(heard(&mut state, switched(false, Message::SetUiSounds(false))), vec![Sound::Off]);
+        assert_eq!(heard(&mut state, switched(true, Message::SetUiSounds(true))), vec![Sound::On]);
+        // Celebration sounds' own rise as it comes on, with no tick on top.
+        assert_eq!(heard(&mut state, switched(false, Message::SetCelebrationSounds(false))), vec![Sound::Off]);
+        assert_eq!(heard(&mut state, switched(true, Message::SetCelebrationSounds(true))), vec![Sound::Rise(0)]);
+        assert!(state.switch_press.is_none(), "nothing left over for the next press");
+        // A sound of its own is kept: 48V's armed ticks, a refusal.
+        assert_eq!(for_switch(Some(true), Some(Sound::Arm)), Some(Sound::Arm));
+        assert_eq!(for_switch(Some(false), Some(Sound::Nope)), Some(Sound::Nope));
+        assert_eq!(for_switch(None, Some(Sound::Tap)), Some(Sound::Tap), "not a switch: as before");
     }
 
     #[test]

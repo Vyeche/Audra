@@ -109,7 +109,7 @@ fn cut_at(area: Rectangle, card: Option<Rectangle>, x0: f32, x1: f32) -> Rectang
 /// A card at the window's foot that floating panels keep clear of: they
 /// stop above it rather than covering it (`KEEP_CLEAR`).
 pub fn keep_clear<'a, Message: 'a>(card: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    Element::new(Host { content: card.into(), axes: Axes::Card, measure: None, across: false })
+    Element::new(Host { content: card.into(), axes: Axes::Card, measure: None, across: false, perch: None })
 }
 
 /// `content`, its height written into `into` at every layout: what it
@@ -119,7 +119,7 @@ pub fn measure<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
     into: &'static std::thread::LocalKey<Cell<f32>>,
 ) -> Element<'a, Message> {
-    Element::new(Host { content: content.into(), axes: Axes::Plain, measure: Some(into), across: false })
+    Element::new(Host { content: content.into(), axes: Axes::Plain, measure: Some(into), across: false, perch: None })
 }
 
 /// `content`, its width written into `into` at every layout (the top bar's
@@ -128,7 +128,7 @@ pub fn measure_width<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
     into: &'static std::thread::LocalKey<Cell<f32>>,
 ) -> Element<'a, Message> {
-    Element::new(Host { content: content.into(), axes: Axes::Plain, measure: Some(into), across: true })
+    Element::new(Host { content: content.into(), axes: Axes::Plain, measure: Some(into), across: true, perch: None })
 }
 
 /// A row of strips: its hints and its routing lists draw over a panel
@@ -139,18 +139,18 @@ pub fn measure_width<'a, Message: 'a>(
 /// showed only down to the panel's top). In a layer of its own, opened
 /// after the panel's, it lies over it.
 pub fn lift<'a, Message: 'a>(row: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    Element::new(Host { content: row.into(), axes: Axes::Lift, measure: None, across: false })
+    Element::new(Host { content: row.into(), axes: Axes::Lift, measure: None, across: false, perch: None })
 }
 
 /// The mixer's page: panels inside it draw only inside it.
 pub fn page<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    Element::new(Host { content: content.into(), axes: Axes::Both, measure: None, across: false })
+    Element::new(Host { content: content.into(), axes: Axes::Both, measure: None, across: false, perch: None })
 }
 
 /// A row of strips: panels inside it draw only between its left and right
 /// edges, and hang past it up and down.
 pub fn lane<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    Element::new(Host { content: content.into(), axes: Axes::Across, measure: None, across: false })
+    Element::new(Host { content: content.into(), axes: Axes::Across, measure: None, across: false, perch: None })
 }
 
 /// A panel `width` wide in its row's slot. `float`: hang past the row as
@@ -179,6 +179,34 @@ struct Host<'a, Message> {
     measure: Option<&'static std::thread::LocalKey<Cell<f32>>>,
     /// Its width written down instead of its height (`measure_width`).
     across: bool,
+    /// Its box on screen written down as the helper cat's perch `id`
+    /// (`perch`).
+    perch: Option<u8>,
+}
+
+thread_local! {
+    /// The mixer's page on screen while its rows draw (`page`): a perch
+    /// inside it is drawn at its unscrolled place, and is moved by the
+    /// page's scroll from here (Opus's review: a scrolled page put the cat
+    /// over a strip's name plate).
+    static PAGE: Cell<Option<Rectangle>> = const { Cell::new(None) };
+    /// Where the helper cat may rest, as last drawn: an empty stretch's box
+    /// on screen by perch id, and when it was drawn (`perch`, `perches`).
+    static PERCHES: std::cell::RefCell<Vec<(u8, Rectangle, std::time::Instant)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `content`, an empty stretch the helper cat may rest on (the gap in the
+/// top bar, a row heading's middle): its box on screen written down at
+/// every draw, under perch `id` (`helper`).
+pub fn perch<'a, Message: 'a>(content: impl Into<Element<'a, Message>>, id: u8) -> Element<'a, Message> {
+    Element::new(Host { content: content.into(), axes: Axes::Plain, measure: None, across: false, perch: Some(id) })
+}
+
+/// The perches drawn within the last two seconds (an empty stretch that
+/// went, a folded row's heading, drops out), by id.
+pub fn perches() -> Vec<(u8, Rectangle)> {
+    let now = std::time::Instant::now();
+    PERCHES.with(|p| p.borrow().iter().filter(|(_, _, at)| now.saturating_duration_since(*at).as_secs_f32() < 2.0).map(|&(id, r, _)| (id, r)).collect())
 }
 
 impl<Message> Widget<Message, Theme, Renderer> for Host<'_, Message> {
@@ -250,6 +278,33 @@ impl<Message> Widget<Message, Theme, Renderer> for Host<'_, Message> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        if let Some(id) = self.perch {
+            let mut at = layout.bounds();
+            // Inside the scrolling page: moved by its scroll (the viewport
+            // here is the page's visible part in its own coordinates), and
+            // none while scrolled out of sight.
+            let visible = match PAGE.with(Cell::get) {
+                Some(page) => {
+                    at.x -= viewport.x - page.x;
+                    at.y -= viewport.y - page.y;
+                    at.y >= page.y && at.y + at.height <= page.y + page.height
+                }
+                None => true,
+            };
+            PERCHES.with(|p| {
+                let mut p = p.borrow_mut();
+                p.retain(|(i, _, _)| *i != id);
+                if visible {
+                    p.push((id, at, std::time::Instant::now()));
+                }
+            });
+        }
+        if matches!(self.axes, Axes::Both) {
+            PAGE.with(|p| p.set(Some(layout.bounds())));
+            self.content.as_widget().draw(tree, renderer, theme, style, layout, cursor, viewport);
+            PAGE.with(|p| p.set(None));
+            return;
+        }
         self.content.as_widget().draw(tree, renderer, theme, style, layout, cursor, viewport);
     }
 

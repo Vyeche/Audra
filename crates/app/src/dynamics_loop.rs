@@ -40,6 +40,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use std::sync::atomic::AtomicU8;
+use audra_fx::room_eq::{RoomEq, RoomEqParams};
 use audra_fx::{Dynamics, DynamicsParams, VoiceChain};
 use std::sync::atomic::AtomicI32;
 use tuxmix_core::pw_meter::{self, TapKind};
@@ -93,6 +94,17 @@ pub enum DynState {
 struct Shared {
     params: Mutex<DynamicsParams>,
     generation: AtomicU64,
+    /// An output's Room EQ (issue #29), run after its Voice in the same
+    /// loop, so the speakers' channels have one writer; and its own count
+    /// of changes.
+    room: Mutex<RoomEqParams>,
+    room_generation: AtomicU64,
+    /// Whether an output's Voice runs: off, the loop stays for Room EQ and
+    /// Voice fades out of the sound instead of stopping it.
+    voice: AtomicBool,
+    /// Room EQ switched right off and Loudness faded right out: the sound
+    /// passes untouched, so the loop may go (`DynLoop::idle`).
+    idle: AtomicBool,
     state: Mutex<DynState>,
     /// The deepest turn-down lately, in dB (f32 bits).
     meter: AtomicU32,
@@ -142,7 +154,7 @@ enum Path {
     Input { channels: Vec<usize>, names: Names, tone: bool },
     /// A virtual speaker (`node`, shown as `label`) to the unit's playback
     /// channels (one, or a linked pair) of an output.
-    Output { channels: Vec<usize>, node: String, label: String },
+    Output { channels: Vec<usize>, node: String, label: String, voice: bool, room: RoomEqParams },
 }
 
 /// The running loop; dropping it stops it and takes the virtual mic (or
@@ -178,8 +190,16 @@ impl DynLoop {
     /// Starts an output's: a virtual speaker named `node` (shown as
     /// `label`) into the unit's playback `channels` (one, or a linked
     /// pair).
+    #[cfg(test)]
     pub fn start_output(channels: Vec<usize>, node: String, label: String, params: DynamicsParams) -> Self {
-        Self::start_path(Path::Output { channels, node, label }, params)
+        Self::start_output_with(channels, node, label, params, true, RoomEqParams::default())
+    }
+
+    /// `start_output`, with whether Loudness shapes the sound (`voice`)
+    /// and Main's Room EQ (`room`, issue #29) set before the loop reads
+    /// them, so a loop kept only for Room EQ never runs Loudness at all.
+    pub fn start_output_with(channels: Vec<usize>, node: String, label: String, params: DynamicsParams, voice: bool, room: RoomEqParams) -> Self {
+        Self::start_path(Path::Output { channels, node, label, voice, room }, params)
     }
 
     fn start_path(path: Path, params: DynamicsParams) -> Self {
@@ -190,6 +210,10 @@ impl DynLoop {
         let shared = Arc::new(Shared {
             params: Mutex::new(params),
             generation: AtomicU64::new(1),
+            room: Mutex::new(RoomEqParams::default()),
+            room_generation: AtomicU64::new(1),
+            voice: AtomicBool::new(true),
+            idle: AtomicBool::new(false),
             state: Mutex::new(DynState::Starting),
             meter: AtomicU32::new(0f32.to_bits()),
             level: AtomicU32::new((-120f32).to_bits()),
@@ -210,6 +234,12 @@ impl DynLoop {
             q_sum: AtomicU64::new(0),
             q_n: AtomicU64::new(0),
         });
+        if let Path::Output { voice, room, .. } = &path {
+            shared.voice.store(*voice, Ordering::Relaxed);
+            if let Ok(mut r) = shared.room.lock() {
+                *r = *room;
+            }
+        }
         let children = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let worker = {
@@ -222,7 +252,7 @@ impl DynLoop {
                     crate::priority::raise_this_thread("Voice");
                     let result = match &path {
                         Path::Input { channels, names, tone } => run(&shared, &children, &stop, channels, *names, *tone),
-                        Path::Output { channels, node, label } => run_output(&shared, &children, &stop, channels, node, label),
+                        Path::Output { channels, node, label, .. } => run_output(&shared, &children, &stop, channels, node, label),
                     };
                     kill_all(&children);
                     if let Err(why) = result {
@@ -239,6 +269,29 @@ impl DynLoop {
             *p = params;
         }
         self.shared.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// An output's Room EQ (issue #29); it glides to the new settings.
+    pub fn set_room(&self, params: RoomEqParams) {
+        if let Ok(mut p) = self.shared.room.lock() {
+            if *p == params {
+                return;
+            }
+            *p = params;
+        }
+        self.shared.room_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Whether an output's Voice shapes the sound; switched, it fades.
+    pub fn set_voice(&self, on: bool) {
+        self.shared.voice.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether the sound passes untouched now (Loudness and Room EQ both
+    /// faded out), so dropping the loop changes nothing apps hear but its
+    /// place: or it isn't running at all.
+    pub fn idle(&self) -> bool {
+        self.state() != DynState::Running || self.shared.idle.load(Ordering::Relaxed)
     }
 
     pub fn state(&self) -> DynState {
@@ -908,6 +961,17 @@ fn run_output(shared: &Shared, children: &Mutex<Vec<Child>>, stop: &AtomicBool, 
     let stereo = channels.len() > 1;
     let mut dyn_ = Dynamics::new(sink.rate as f32, shared.params.lock().map(|p| *p).unwrap_or_default());
     let mut seen = shared.generation.load(Ordering::Relaxed);
+    // Built off, then set to what's asked on the first block, so it glides
+    // on rather than starting at its full settings (round 5: `ensure` had
+    // already asked for "on" before this ran).
+    let mut room = RoomEq::new(sink.rate as f32, RoomEqParams { on: false, ..shared.room.lock().map(|p| *p).unwrap_or_default() });
+    let mut room_seen = 0;
+    // Voice's share of the sound, 0 to 1: switched, it fades over 50 ms,
+    // so turning Voice off while Room EQ keeps the loop is never a step
+    // (a compressor's turn-down let go at once could jump the level up).
+    let mut voice_mix: f32 = if shared.voice.load(Ordering::Relaxed) { 1.0 } else { 0.0 };
+    let voice_step = 1.0 / (0.05 * sink.rate as f32).max(1.0);
+    let (mut dry_l, mut dry_r) = (vec![0f32; BLOCK_FRAMES], vec![0f32; BLOCK_FRAMES]);
     let mut block = vec![0u8; BLOCK_FRAMES * 8];
     let (mut l, mut r) = (vec![0f32; BLOCK_FRAMES], vec![0f32; BLOCK_FRAMES]);
     // Silent everywhere but the output's channels, which every block fills.
@@ -947,11 +1011,43 @@ fn run_output(shared: &Shared, children: &Mutex<Vec<Child>>, stop: &AtomicBool, 
             }
         }
         peak = peak.max(block_peak(&l, if stereo { Some(&r) } else { None }));
-        if stereo {
-            dyn_.process(&mut l, Some(&mut r));
-        } else {
-            dyn_.process(&mut l, None);
+        let rg = shared.room_generation.load(Ordering::Relaxed);
+        if rg != room_seen {
+            room_seen = rg;
+            if let Ok(p) = shared.room.lock() {
+                room.set(*p);
+            }
         }
+        let want_voice = shared.voice.load(Ordering::Relaxed);
+        // Coming back after it was faded right out: from a clean start, not
+        // the turn-down it froze with (the review: an old Auto Level gain,
+        // up to 18 dB, would fade back in).
+        if want_voice && voice_mix == 0.0 {
+            dyn_.reset();
+        }
+        if want_voice || voice_mix > 0.0 {
+            dry_l.copy_from_slice(&l);
+            dry_r.copy_from_slice(&r);
+            if stereo {
+                dyn_.process(&mut l, Some(&mut r));
+            } else {
+                dyn_.process(&mut l, None);
+            }
+            let target = if want_voice { 1.0 } else { 0.0 };
+            if voice_mix != target || target < 1.0 {
+                for i in 0..l.len() {
+                    voice_mix = if target > voice_mix { (voice_mix + voice_step).min(1.0) } else { (voice_mix - voice_step).max(0.0) };
+                    l[i] = dry_l[i] + (l[i] - dry_l[i]) * voice_mix;
+                    r[i] = dry_r[i] + (r[i] - dry_r[i]) * voice_mix;
+                }
+            }
+        }
+        if stereo {
+            room.process(&mut l, Some(&mut r));
+        } else {
+            room.process(&mut l, None);
+        }
+        shared.idle.store(room.is_idle() && voice_mix == 0.0 && !want_voice, Ordering::Relaxed);
         meter = meter.min(dyn_.take_meter_db());
         if meter_at.elapsed() >= Duration::from_millis(PUBLISH_MS) {
             publish(shared, meter, peak, dyn_.auto_gain_db());

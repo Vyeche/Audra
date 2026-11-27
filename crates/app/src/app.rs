@@ -1307,12 +1307,28 @@ pub enum Message {
     /// (`tricks`), so the keyboard path is found and the click path can
     /// earn a tip.
     KeyShortcut(&'static str, Box<Message>),
+    /// A press on a switch row (`switch_row`): the message it sends and
+    /// whether it turns the switch on, so it ticks On or Off as the
+    /// strips' lamp keys do. Most switches only tapped, many in Audra
+    /// settings made no sound (the owner, 2026-11-24: "switches dont make
+    /// sounds when i toggle them").
+    Switched(bool, Box<Message>),
+    /// The Room EQ page (issue #29, `room_eq`).
+    RoomEq(crate::room_eq::RoomMsg),
+    ToggleRoomEq,
     /// The trick card's close, and the pointer on it (it stays).
     TrickCardClose,
     TrickCardHeld(bool),
     /// Tips and new tricks on or off (Audra settings → App), and the tips
     /// shown forgotten so they come again.
     SetTips(bool),
+    /// The helper cat beside the tips, on or off.
+    SetHelperCat(bool),
+    /// The helper cat: poked (a press and release on it), dragged to a
+    /// point in the window, let go there (`helper::on_pointer`).
+    CatPoke,
+    CatDrag(f32, f32),
+    CatDrop(f32, f32),
     /// Milestones' cards and notes on or off (apart from Tips).
     SetMilestones(bool),
     /// The small wins' sparks and note on or off.
@@ -1485,6 +1501,8 @@ pub enum Message {
     Redo,
     /// Shows one page of the counter's tabbed area.
     SidebarTab(sidebar::Tab),
+    /// A sidebar page opened, never closed by it (`SidebarTab` toggles).
+    SidebarTabOpen(sidebar::Tab),
     /// Expands/collapses the whole right-hand column (the counter).
     ToggleSidebar,
     /// One horizontal drag step on the sidebar's own resize strip, in
@@ -1695,6 +1713,9 @@ pub enum Message {
     /// Reverb & Echo's one fix: the send and this mix's return, whichever
     /// are off, at −12 dB; and its card closed (on a short window).
     FxMakeHeard(usize),
+    /// Make it heard's key pressed again (the owner, issue #45: "I think we
+    /// need a way to toggle the change"): what it turned up goes back down.
+    FxTurnBackDown,
     FxCardClose,
     /// Reverb & Echo's "Hear a clap": one clap through what's on.
     FxAudition,
@@ -1977,6 +1998,14 @@ pub struct TuxMix {
     /// FX returns on their way up after a snapshot or Undo raised them by
     /// more than `RAMP_OVER_DB`: output pair, from and to (dB), since.
     pub fx_return_ramps: HashMap<usize, (f32, f32, Instant)>,
+    /// What Make it heard last turned up, so its key can turn it back down
+    /// (`fx::made_heard_up`; the owner, issue #45).
+    pub made_heard: Option<crate::fx::MadeHeard>,
+    /// The helper cat beside the foot card, its speech bubble (`helper.rs`;
+    /// Audra settings → App).
+    pub helper_cat: bool,
+    /// Where the cat is in its band and its walk (`helper::tick`).
+    pub cat: crate::helper::CatState,
     /// The FX send (left, right) and return (left, right) meters.
     pub fx_meters: [MeterAnim; 4],
     /// The user's own Reverb and Echo presets (kept in the prefs).
@@ -2224,6 +2253,18 @@ pub struct TuxMix {
     /// they make no click: it can run mid-take (the scout: a Detent tick at
     /// each 10 dB mark, on the unit a stream may be capturing).
     pub quiet_steps: bool,
+    /// The press being handled came from a switch row, turning it on
+    /// (`true`) or off: its sound is On or Off where the message alone
+    /// would only tap or say nothing (`Message::Switched`).
+    pub switch_press: Option<bool>,
+    /// Room EQ for Main's speakers (issue #29, prefs `room_eq`), the card
+    /// showing it, which speaker and band its knobs edit, and a switch-off
+    /// waiting for its second press while apps play there.
+    pub room_eq: audra_fx::room_eq::RoomEqParams,
+    pub show_room_eq: bool,
+    pub room_eq_sides: crate::room_eq::Sides,
+    pub room_eq_band: usize,
+    pub room_eq_off_armed: Option<Instant>,
     /// A MIDI controller's or a Mackie surface's message is being handled:
     /// its fader moves take the gentle way (`set_level_gently`), as OSC's
     /// do. A CC from 0 to 127 put a level from silence to +6 dB in one write
@@ -3153,6 +3194,9 @@ pub fn new(mock: bool, osc_config: Option<OscConfig>, backend: Option<String>) -
         fx_state: None,
         fx_available,
         fx_return_ramps: HashMap::new(),
+        made_heard: None,
+        helper_cat: true,
+        cat: crate::helper::CatState::default(),
         fx_meters: std::array::from_fn(|_| MeterAnim::new()),
         fx_presets: Default::default(),
         fx_naming: None,
@@ -3251,6 +3295,12 @@ pub fn new(mock: bool, osc_config: Option<OscConfig>, backend: Option<String>) -
         ui_sounds: true,
         ui_sound_db: crate::sounds::DEFAULT_VOLUME_DB,
         quiet_steps: false,
+        switch_press: None,
+        room_eq: crate::room_eq::fresh(),
+        show_room_eq: false,
+        room_eq_sides: crate::room_eq::Sides::Both,
+        room_eq_band: 0,
+        room_eq_off_armed: None,
         from_remote: false,
         floor_anim: None,
         blooms: HashMap::new(),
@@ -3725,7 +3775,24 @@ pub(crate) fn sync_other_scene(state: &mut TuxMix, their: &Scene) {
 }
 
 /// `apply_mix_scene`, its output rises measured from `levels_before`.
+/// `apply_mix_scene_inner`, and Make it heard's memory forgotten when the
+/// scene that came in moved the send or the return it raised (Fable's
+/// review of issue #45: any Undo forgot it, a gain's too, and a refused
+/// scene).
 pub(crate) fn apply_mix_scene_from(state: &mut TuxMix, scene: &Scene, levels_before: &[f32]) -> Result<(), tuxmix_core::Error> {
+    // In dB, within 0.05 dB: a glide's end comes back a rounding step off
+    // (Fable's round 2).
+    let levels = |state: &TuxMix| state.made_heard.map(|m| (crate::fx::send_db(state), crate::fx::returns_to_keep(state).get(m.pair).map_or(-200.0, |r| crate::fx::vol_db(r.1).max(-200.0))));
+    let moved = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() > 0.05 || (a.1 - b.1).abs() > 0.05;
+    let before = levels(state);
+    let result = apply_mix_scene_inner(state, scene, levels_before);
+    if result.is_ok() && before.zip(levels(state)).is_some_and(|(b, a)| moved(b, a)) {
+        state.made_heard = None;
+    }
+    result
+}
+
+fn apply_mix_scene_inner(state: &mut TuxMix, scene: &Scene, levels_before: &[f32]) -> Result<(), tuxmix_core::Error> {
     // Another mix comes back: Quick setup's lit card and its "… is set"
     // card no longer describe it (critique #80 A 7).
     state.setup_done = None;
@@ -4785,6 +4852,7 @@ pub fn prefs_of(state: &TuxMix) -> crate::prefs::Prefs {
         shimmers_shown: state.shimmers_shown.clone(),
         tips_shown: state.tips_shown.clone(),
         tips_off: !state.tips,
+        helper_cat_off: !state.helper_cat,
         milestones_off: !state.milestone_cards,
         small_wins_off: !state.small_wins,
         plain_names_off: !state.plain_names,
@@ -4817,6 +4885,7 @@ pub fn prefs_of(state: &TuxMix) -> crate::prefs::Prefs {
         dynamics_yours_extras: state.dyn_yours.get(&(false, 0)).and_then(|y| y.extras).map(|x| (x.noise, x.deess, x.tune)),
         dynamics_outputs: (!state.dyn_outs.is_empty())
             .then(|| state.dyn_outs.iter().map(|(&output, o)| crate::prefs::OutDynPref { output, on: o.on, params: o.params }).collect()),
+        room_eq: (state.room_eq != crate::room_eq::fresh()).then_some(state.room_eq),
         open_mics_kept: (!state.open_mic_kept.is_empty()).then(|| {
             let mut v: Vec<(ChannelId, usize)> = state.open_mic_kept.iter().copied().collect();
             v.sort_by_key(|&(c, p)| (format!("{c:?}"), p));
@@ -5036,6 +5105,7 @@ pub fn apply_prefs(state: &mut TuxMix, prefs: crate::prefs::Prefs) {
     state.shimmers_shown = prefs.shimmers_shown.clone();
     state.tips_shown = prefs.tips_shown.clone();
     state.tips = !prefs.tips_off;
+    state.helper_cat = !prefs.helper_cat_off;
     state.milestone_cards = !prefs.milestones_off;
     state.small_wins = !prefs.small_wins_off;
     state.plain_names = !prefs.plain_names_off;
@@ -5080,6 +5150,9 @@ pub fn apply_prefs(state: &mut TuxMix, prefs: crate::prefs::Prefs) {
         .into_iter()
         .map(|d| (d.output, crate::dynamics_panel::OutDyn::kept(d.on, d.params)))
         .collect();
+    if let Some(room) = prefs.room_eq {
+        state.room_eq = room.sanitized();
+    }
     state.launcher_entry_off = prefs.launcher_entry == Some(false);
     if let Some(tab) = prefs.open_page.as_deref().and_then(sidebar::page_of) {
         state.sidebar_tab = tab;
@@ -5222,7 +5295,9 @@ fn changes_prefs(message: &Message) -> bool {
     matches!(
         message,
         Message::TrayAnswer(_)
+            | Message::RoomEq(_)
             | Message::SetTips(_)
+            | Message::SetHelperCat(_)
             | Message::SetMilestones(_)
             | Message::SetSmallWins(_)
             | Message::SetPlainNames(_)
@@ -6512,6 +6587,8 @@ fn is_undoable(message: &Message) -> bool {
         message,
         Message::Tick
             | Message::RouteMenu(_)
+            | Message::RoomEq(_)
+            | Message::ToggleRoomEq
             | Message::KeepMicPreset
             | Message::SetAutoSet(..)
             | Message::RecordToggle
@@ -6569,6 +6646,7 @@ fn is_undoable(message: &Message) -> bool {
             | Message::TrickCardClose
             | Message::TrickCardHeld(_)
             | Message::SetTips(_)
+            | Message::SetHelperCat(_)
             | Message::SetMilestones(_)
             | Message::MySetupSave
             | Message::MySetupAsk(_)
@@ -6701,6 +6779,7 @@ fn is_undoable(message: &Message) -> bool {
             | Message::Undo
             | Message::Redo
             | Message::SidebarTab(_)
+            | Message::SidebarTabOpen(_)
             | Message::ToggleSidebar
             | Message::SidebarResize(_)
             | Message::SetRowMode(_)
@@ -6826,6 +6905,9 @@ fn locked_out(state: &TuxMix, message: &Message) -> bool {
         Message::LoopArm(_) => true,
         // Dynamics change the voice on air the same way (issue #27).
         Message::Dyn(..) | Message::AutoTune(..) => true,
+        // Room EQ changes what the speakers play the same way (#29);
+        // picking a band or a speaker to look at doesn't.
+        Message::RoomEq(m) => !matches!(m, crate::room_eq::RoomMsg::Pick(_) | crate::room_eq::RoomMsg::Sides(_)),
         Message::OscCommand(cmd) => !matches!(cmd, OscCommand::Refresh),
         other => changes_mix(other),
     }
@@ -6861,6 +6943,7 @@ fn needs_protocol_features(message: &Message) -> bool {
             | Message::SourceWidth(..)
             | Message::FxReturn(..)
             | Message::FxMakeHeard(_)
+            | Message::FxTurnBackDown
             | Message::PhaseChanged(..)
             | Message::LoopbackChanged(..)
             | Message::PitchChanged(_)
@@ -6898,6 +6981,14 @@ fn flips_many(message: &Message) -> bool {
 const LOCKED_NOTICE: &str = "The mix is locked. Unlock it with the lock in the top bar.";
 
 pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
+    // A switch row's press: handled as its own message, heard as the
+    // switch turning on or off (`sound_for`).
+    if let Message::Switched(on, inner) = message {
+        state.switch_press = Some(on);
+        let task = update(state, *inner);
+        state.switch_press = None;
+        return task;
+    }
     if let Message::OscCommand(cmd) = &message {
         if !osc_in_range(state, cmd) {
             log::warn!("OSC: dropped a command for a channel the unit hasn't got: {cmd:?}");
@@ -6912,7 +7003,7 @@ pub fn update(state: &mut TuxMix, message: Message) -> Task<Message> {
     }
     // The Mute FX key can leave the layout under the pointer (a view, the
     // column, a page): its glow lets go then (critique #64 A 8).
-    if matches!(message, Message::SetView(_) | Message::ToggleSidebar | Message::ToggleSettings | Message::SidebarTab(_) | Message::ToggleAbout) {
+    if matches!(message, Message::SetView(_) | Message::ToggleSidebar | Message::ToggleSettings | Message::SidebarTab(_) | Message::SidebarTabOpen(_) | Message::ToggleAbout) {
         state.mute_fx_hover = false;
     }
     // While About stands, the keys that act on the mix or the counter don't
@@ -7254,8 +7345,12 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
     // A remote surface's presses and moves make none either: the sound is
     // for a hand on the screen (the audit: Mackie and MIDI clicked, their
     // faders ticked at 0 dB, OSC's PAD tapped).
+    // Taken here, so what the handler sets off inside stays as it was.
+    // Celebration sounds' own switch plays a rise as it comes on: no tick
+    // on top of it (the reviewer).
+    let switched = state.switch_press.take().filter(|_| !matches!(message, Message::SetCelebrationSounds(true)));
     if state.ui_sounds && !state.quiet_steps && !state.from_remote && !matches!(message, Message::SetUiLock(true)) {
-        if let Some(sound) = crate::sounds::for_message(state, &message) {
+        if let Some(sound) = crate::sounds::for_switch(switched, crate::sounds::for_message(state, &message)) {
             if state.saving {
                 // The keep's own "kept" plays once the handler has said how
                 // it went; what it sets off inside (a theme copy's switch to
@@ -7312,7 +7407,10 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
             && match cid {
                 ChannelId::Output(ch) => crate::control_room::linked_master(state, ch).is_none_or(|o| same(crate::control_room::user_output_level(state, o), v)),
                 _ => true,
-            });
+            })
+        // A "Turn it back down" with nothing to lower yet (a double-click
+        // inside its arm) changes nothing either (issue #45, round 2).
+        || (matches!(message, Message::FxTurnBackDown) && !crate::fx::turn_down_ready(state));
     if is_undoable(&message) && !listens && !no_change && !state.undo_batch {
         // A continuous edit opens one undo step for the whole gesture.
         let now = Instant::now();
@@ -7362,6 +7460,8 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
             }
             // The theme by time of day: its change comes within a tick.
             crate::themetime::follow(state, crate::themetime::FADE_SCHEDULED);
+            // The helper cat's walks (`helper::tick`).
+            crate::helper::tick(state, Instant::now());
             if state.sel_out != state.lamp_sel {
                 // Stepping through mixes ([ and ], or quick picks): the
                 // wave runs once, then only the lamps fade (critique #50:
@@ -7764,6 +7864,8 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 };
             }
             crate::tray::TrayEvent::Settings => {
+                state.show_room_eq = false;
+                state.room_eq_off_armed = None;
                 state.show_settings = true;
                 state.show_device_panel = false;
                 return show_window(state);
@@ -7975,6 +8077,9 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 }
             } else if state.show_device_panel {
                 state.show_device_panel = false;
+            } else if state.show_room_eq {
+                state.show_room_eq = false;
+                state.room_eq_off_armed = None;
             } else if state.show_workspaces {
                 state.show_workspaces = false;
                 state.workspace_armed = None;
@@ -8993,7 +9098,7 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
             }
         }
         Message::NoticeHeld(held) => state.notice_held = held,
-        Message::KeyShortcut(..) => {}
+        Message::KeyShortcut(..) | Message::Switched(..) => {}
         Message::TrickCardClose => {
             state.trick_card = None;
             state.trick_card_held = false;
@@ -9036,6 +9141,11 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 state.trick_card = None;
             }
         }
+        Message::SetHelperCat(on) => {
+            state.helper_cat = on;
+            state.prefs_dirty = true;
+        }
+        Message::CatPoke | Message::CatDrag(..) | Message::CatDrop(..) => crate::helper::on_pointer(state, &message),
         Message::SetRecordFx(unit, on) => {
             let rec_words = |state: &TuxMix| take_fx(state).is_ok().then(|| take_fx_words(state));
             let before = rec_words(state);
@@ -9160,6 +9270,7 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
         | Message::FxPresetRemove(..)
         | Message::SetFxSendFollow(_)
         | Message::FxMakeHeard(_)
+        | Message::FxTurnBackDown
         | Message::FxCardClose
         | Message::FxAudition
         | Message::FxPreview => return crate::fx::update(state, message),
@@ -9425,10 +9536,14 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
         Message::ToggleOscLog => state.show_osc_log = !state.show_osc_log,
         Message::ClearOscLog => state.osc_log.clear(),
         Message::ToggleDevicePanel => {
+            state.show_room_eq = false;
+            state.room_eq_off_armed = None;
             state.show_device_panel = !state.show_device_panel;
             state.show_settings = false;
         }
         Message::ToggleSettings => {
+            state.show_room_eq = false;
+            state.room_eq_off_armed = None;
             state.show_settings = !state.show_settings;
             if state.show_settings && state.settings_page == SettingsPage::App {
                 refresh_recordings(state);
@@ -9544,6 +9659,8 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
             return iced::widget::operation::snap_to(POPOVER_SCROLL_ID, scrollable::RelativeOffset { x: 0.0, y: 1.0 });
         }
         Message::OpenSettingsAt(page) => {
+            state.show_room_eq = false;
+            state.room_eq_off_armed = None;
             if page == SettingsPage::App {
                 refresh_recordings(state);
             }
@@ -9795,6 +9912,8 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
             return update(state, Message::EditMix(pair));
         }
         Message::ToggleAbout => {
+            state.show_room_eq = false;
+            state.room_eq_off_armed = None;
             state.show_about = !state.show_about;
             if state.show_about {
                 state.show_settings = false;
@@ -9984,7 +10103,18 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 return update(state, message);
             }
         }
+        Message::RoomEq(m) => crate::room_eq::update(state, m),
+        Message::ToggleRoomEq => {
+            state.show_room_eq = !state.show_room_eq;
+            state.show_settings = false;
+            state.show_device_panel = false;
+            state.show_workspaces = false;
+            state.show_about = false;
+            state.room_eq_off_armed = None;
+        }
         Message::ToggleWorkspaces => {
+            state.show_room_eq = false;
+            state.room_eq_off_armed = None;
             state.show_workspaces = !state.show_workspaces;
             state.show_settings = false;
             state.show_device_panel = false;
@@ -10220,28 +10350,20 @@ fn update_decided(state: &mut TuxMix, message: Message) -> Task<Message> {
                 say_stream_lost_voice(state, &voices, "Redo", "Undo (Ctrl+Z) puts it back.");
             }
         }
+        // Opens the page and never closes it: a "see how" that points at
+        // the page (the owner, issue #45: the placard's row changed levels
+        // in one click and looked like the rows that only open things).
+        // The bar's own opening, once (Opus's review: through `update` it
+        // ran the tap and the guides twice).
+        Message::SidebarTabOpen(tab) => {
+            if sidebar::page_open(state) != Some(tab) {
+                open_sidebar_tab(state, tab);
+            }
+        }
         // A bar opens its page, or closes it if it is the one open (its
         // chevron says so; 2026-11-06, the owner: they "dont close when I
         // click them").
-        Message::SidebarTab(tab) => {
-            if sidebar::pages_float(state) {
-                // Its key opens the page as a card beside the column, and
-                // a second press closes it; another key swaps the card,
-                // closing what was armed in the last one.
-                let was = sidebar::page_open(state);
-                if was.is_some() {
-                    close_page_card(state);
-                }
-                if was != Some(tab) {
-                    state.sidebar_tab = Some(tab);
-                    state.page_card = true;
-                }
-            } else {
-                state.sidebar_tab = if state.sidebar_tab == Some(tab) { None } else { Some(tab) };
-                state.page_card = false;
-            }
-            state.prefs_dirty = true;
-        }
+        Message::SidebarTab(tab) => open_sidebar_tab(state, tab),
         Message::ToggleSidebar => {
             state.sidebar_open = !state.sidebar_open;
             state.auto_folded = false;
@@ -10995,7 +11117,8 @@ pub fn tick_interval(state: &TuxMix) -> Duration {
         || !state.fader_glides.is_empty()
         || !state.fx_return_ramps.is_empty()
         || crate::control_room::is_easing(state);
-    if gliding || crate::keyfocus::kept() {
+    // A walk under way: smooth only while it lasts (never hidden).
+    if gliding || crate::keyfocus::kept() || (crate::helper::moving(state) && !state.window_hidden) {
         return TICK_ACTIVE;
     }
     let remote_meters = state.mackie.on && state.mackie.meters || state.osc_tx.is_some();
@@ -11346,6 +11469,12 @@ pub fn view(state: &TuxMix, _window: window::Id) -> Element<'_, Message> {
             .height(Length::Fill)
             .into();
     }
+    // The helper cat over the window, under every panel, card, notice and
+    // dialog that follows (`helper::overlay`; Opus's review: the Device
+    // panel and the folded card were under it).
+    if state.helper_cat {
+        base = stack(vec![base, crate::helper::overlay(state)]).width(Length::Fill).height(Length::Fill).into();
+    }
     if state.show_device_panel {
         base = stack(vec![base, crate::keyfocus::in_region(crate::keyfocus::Region::Device, || device_panel(state))])
             .width(Length::Fill)
@@ -11423,6 +11552,12 @@ pub fn view(state: &TuxMix, _window: window::Id) -> Element<'_, Message> {
     }
     if state.show_workspaces {
         base = stack(vec![base, workspaces_panel(state)])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+    if state.show_room_eq {
+        base = stack(vec![base, crate::room_eq::panel(state)])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -12001,8 +12136,14 @@ fn popover<'a>(
     body: Element<'a, Message>,
     close: Message,
 ) -> Element<'a, Message> {
+    card(state, body, close, 320.0)
+}
+
+/// `popover` at `card_w` wide (Room EQ's page needs room for its plot),
+/// never wider than the window leaves beside the column.
+pub(crate) fn card<'a>(state: &'a TuxMix, body: Element<'a, Message>, close: Message, card_w: f32) -> Element<'a, Message> {
     let scale = state.ui_scale;
-    const CARD_W: f32 = 320.0;
+    let card_w = card_w.min(state.window_size.map_or(f32::INFINITY, |(w, _)| ((w - sidebar_px(state)) / scale - 2.0 * theme::SPACE_XL).max(320.0)));
     // No taller than the window leaves below the top bar: on a short window
     // (Audra settings is longer than 700 px) the card scrolls instead of
     // running off the bottom.
@@ -12021,7 +12162,7 @@ fn popover<'a>(
         )
         .style(theme::dialog)
         .padding(theme::SPACE_XL * scale)
-        .width(Length::Fixed(CARD_W * scale))
+        .width(Length::Fixed(card_w * scale))
         .max_height(max_h),
     );
 
@@ -12287,6 +12428,7 @@ thread_local! {
 pub(crate) fn foot_compact(state: &TuxMix) -> bool {
     short_window(state) || FOOT_COMPACT.with(std::cell::Cell::get)
 }
+
 
 thread_local! {
     /// Set while the column builds its head drawn tight on a tall window
@@ -13120,6 +13262,7 @@ fn switch_row_why(
     message: Option<Message>,
     scale: f32,
 ) -> Element<'static, Message> {
+    let message = message.map(|m| Message::Switched(!on, Box::new(m)));
     let (w, h, k) = (30.0 * scale, 16.0 * scale, 12.0 * scale);
     let inert = message.is_none();
     let knob = container(iced::widget::Space::new().width(k).height(k)).style(theme::switch_knob(on, inert, k / 2.0));
@@ -13157,6 +13300,7 @@ fn switch_row_why(
 /// critique: Ø and M/S explained only on hover left keyboard users and
 /// first-timers guessing).
 pub(crate) fn switch_row_note(label: &'static str, note: &'static str, on: bool, message: Option<Message>, scale: f32) -> Element<'static, Message> {
+    let message = message.map(|m| Message::Switched(!on, Box::new(m)));
     let (w, h, k) = (30.0 * scale, 16.0 * scale, 12.0 * scale);
     let inert = message.is_none();
     let knob = container(iced::widget::Space::new().width(k).height(k)).style(theme::switch_knob(on, inert, k / 2.0));
@@ -13184,6 +13328,8 @@ pub(crate) fn switch_row_note(label: &'static str, note: &'static str, on: bool,
 /// A switch row waiting for its second press: its note says what that
 /// press does, in the 48V hue, the track in the armed look.
 fn switch_row_armed(label: &'static str, changes: Vec<&'static str>, lead: &'static str, message: Message, scale: f32) -> Element<'static, Message> {
+    // Its second press switches it on: heard as On (`Message::Switched`).
+    let message = Message::Switched(true, Box::new(message));
     let (w, h, k) = (30.0 * scale, 16.0 * scale, 12.0 * scale);
     let knob = container(iced::widget::Space::new().width(k).height(k)).style(theme::switch_knob(false, false, k / 2.0));
     // 48V's ember when phantom power is among what it does, else the
@@ -13390,7 +13536,7 @@ fn workspaces_panel(state: &TuxMix) -> Element<'_, Message> {
 /// labels and notes had no rank).
 /// A card's close: the × the floating cards have, which Esc does too
 /// (critique #26: the word "Close" on three panels, × on the rest).
-fn close_x(message: Message, scale: f32) -> Element<'static, Message> {
+pub(crate) fn close_x(message: Message, scale: f32) -> Element<'static, Message> {
     let key = iced::widget::button(crate::widgets::strip_icons::close_icon(theme::text_sec(), scale))
         .padding(0)
         .width(Length::Fixed(20.0 * scale))
@@ -13407,7 +13553,7 @@ fn settings_lead(words: &'static str, scale: f32) -> Element<'static, Message> {
     text(words).size(theme::TEXT_SM * scale).color(theme::muted()).width(Length::Fill).into()
 }
 
-fn settings_head(label: &str, scale: f32) -> Element<'_, Message> {
+pub(crate) fn settings_head(label: &str, scale: f32) -> Element<'_, Message> {
     row![
         text(label).font(theme::SERIF).color(theme::text_primary()).size(theme::TEXT_MD * scale),
         iced::widget::rule::horizontal(1).style(theme::hairline_rule),
@@ -14334,6 +14480,14 @@ fn learning_section(state: &TuxMix) -> Element<'_, Message> {
             Some(Message::SetTips(!state.tips)),
             scale,
         ),
+        // The helper cat (the owner, 2026-11-26): its own switch.
+        switch_row_note(
+            "The helper cat",
+            "It walks about the window; drag it, or poke it for a tip",
+            state.helper_cat,
+            Some(Message::SetHelperCat(!state.helper_cat)),
+            scale,
+        ),
         // Its own switch (the owner, 2026-11-14): tips off no longer hides
         // the wins.
         // A short label and a grey line under it (critique #51: the long
@@ -15145,7 +15299,10 @@ fn top_bar(state: &TuxMix) -> Element<'_, Message> {
         // flexible space sits in the middle, so the session chip stays
         // against the right edge instead of floating at whatever width it
         // used to claim for itself. Its width is measured: the chip's room.
-        crate::widgets::overhang::measure_width(iced::widget::Space::new().width(Length::Fill), &TOP_BAR_FREE_W),
+        // Also the helper cat's perch: the bar's empty middle.
+        // (As tall as the bar: a zero-high space is never drawn, so its box was
+        // never written down.)
+        crate::widgets::overhang::perch(crate::widgets::overhang::measure_width(iced::widget::Space::new().width(Length::Fill).height(Length::Fill), &TOP_BAR_FREE_W), crate::helper::PERCH_TOP_BAR),
     ]
     .spacing(bar_gap)
     .align_y(iced::Alignment::Center);
@@ -17064,6 +17221,7 @@ fn panels_float(state: &TuxMix) -> bool {
         || sidebar::page_card_open(state).is_some()
         || state.show_settings
         || state.show_workspaces
+        || state.show_room_eq
         || state.tray_asking
         || state.quit_asking.is_some()
         || state.show_about)
@@ -18070,6 +18228,15 @@ fn settings_popover<'a>(
             "Opens this output's 3-band EQ and Low cut, on the unit (or click EQ on the strip)",
             scale,
         ), crate::keyfocus::PanelItem::Eq));
+    }
+    // Main's Room EQ (issue #29): tuning the speakers to the room, on the
+    // computer, beside Loudness.
+    if matches!(cid, ChannelId::Output(ch) if ch / 2 == state.control_room.assign.main) {
+        col = col.push(kf(hint(
+            door_row("Room EQ", if state.room_eq.on { "On" } else { "Off" }, Message::ToggleRoomEq, scale),
+            "Opens Room EQ: more EQ bands, a delay and a level for each speaker, for what the computer plays to Main",
+            scale,
+        ), crate::keyfocus::PanelItem::RoomEq));
     }
     if matches!(cid, ChannelId::Output(_)) && crate::dynamics_panel::has_d(state, cid) {
         col = col.push(kf(hint(
@@ -20355,12 +20522,16 @@ fn mixer_view(state: &TuxMix) -> Element<'_, Message> {
     // scrolling.
     // Says what the name means where there is room (the owner, issue #40:
     // "Its not clearly labeled where the control room is located!").
-    let cr_notes: Vec<String> = if state.plain_names {
-        vec!["what you listen on".into()]
+    // In plain names, the words stand by the name, and the key column
+    // gets its own over it (the owner, issue #45: "what you listen on",
+    // right over Dim and Recall, read as if it named those keys).
+    let cr_head: Element<'_, Message> = if state.plain_names {
+        control_room_head(cr_width, crate::control_room::keys_in_mixer(state), scale)
     } else {
-        vec!["Main, Phones and their keys".into(), "Main and Phones".into()]
+        let cr_notes: Vec<String> = vec!["Main, Phones and their keys".into(), "Main and Phones".into()];
+        row_head("Control Room", &cr_notes, cr_width, scale)
     };
-    let cr_head = container(row_head("Control Room", &cr_notes, cr_width, scale)).width(Length::Fixed(cr_width));
+    let cr_head = container(cr_head).width(Length::Fixed(cr_width));
     let cr_strips = container(cr_strips).width(Length::Fixed(cr_width));
     // The two blocks' heads on one line and their strips on the next, so a
     // Control Room panel can float over the strips of either (it floats
@@ -20642,6 +20813,51 @@ fn row_clipped(state: &TuxMix, row: usize) -> bool {
         .any(|(i, m)| m.clipped && !channel_hidden(state, kind(i)))
 }
 
+/// The Control Room's head in plain names: what the strips are, beside the
+/// name ("· your speakers and headphones", shorter where the room is
+/// short), and "listening keys" over the key column when it stands there.
+fn control_room_head<'a>(width: f32, keys: bool, scale: f32) -> Element<'a, Message> {
+    let name = "Control Room";
+    let name_w = name.chars().count() as f32 * theme::TEXT_ROW * 0.55 * scale;
+    // The sans's average advance, measured on these words (0.43 em in
+    // "listening keys"), with a little to spare: the mono's 0.6 dropped the
+    // words by the name at 1440 wide, where they fit.
+    let words_w = |g: &str| g.chars().count() as f32 * theme::TEXT_SM * 0.47 * scale;
+    let keys_label = if keys { "listening keys" } else { "" };
+    let room = width - name_w - theme::SPACE_SM * 5.0 * scale - if keys { words_w(keys_label) } else { 0.0 };
+    let note = ["\u{00b7} your speakers and headphones", "\u{00b7} speakers and headphones", "\u{00b7} where you listen"]
+        .into_iter()
+        .find(|g| words_w(g) <= room)
+        .unwrap_or("");
+    let quiet = |t: &'a str| text(t).size(theme::TEXT_SM * scale).color(theme::muted()).wrapping(iced::advanced::text::Wrapping::None);
+    row![section_header(name, scale), quiet(note), iced::widget::Space::new().width(Length::Fill), quiet(keys_label)]
+        .spacing(theme::SPACE_SM * scale)
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill)
+        .into()
+}
+
+/// A sidebar bar's page opened, or closed if it is the one open.
+fn open_sidebar_tab(state: &mut TuxMix, tab: sidebar::Tab) {
+    if sidebar::pages_float(state) {
+        // Its key opens the page as a card beside the column, and
+        // a second press closes it; another key swaps the card,
+        // closing what was armed in the last one.
+        let was = sidebar::page_open(state);
+        if was.is_some() {
+            close_page_card(state);
+        }
+        if was != Some(tab) {
+            state.sidebar_tab = Some(tab);
+            state.page_card = true;
+        }
+    } else {
+        state.sidebar_tab = if state.sidebar_tab == Some(tab) { None } else { Some(tab) };
+        state.page_card = false;
+    }
+    state.prefs_dirty = true;
+}
+
 /// A row's head: its serif name, and its guide words at the far end.
 /// `guides` runs longest first; the head prints the first one that fits
 /// `width` beside the name (by an estimate of the faces' average advance),
@@ -20707,7 +20923,10 @@ fn floor_head<'a>(
     };
     let mut head = row![
         title,
-        iced::widget::Space::new().width(Length::Fill),
+        // A row heading's empty middle: the helper cat's perch.
+        // A fixed height, not Fill: a filling space stretched the folded
+        // rows' headings; a zero-high one is never drawn.
+        crate::widgets::overhang::perch(iced::widget::Space::new().width(Length::Fill).height(Length::Fixed(18.0 * scale)), crate::helper::perch_of_heading(name)),
         text(range)
             .font(theme::MONO)
             .size(theme::TEXT_SM * scale)
