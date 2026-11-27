@@ -816,6 +816,23 @@ pub(crate) const TAPE_STATE: f32 = 11.0;
 /// tape fills the name's line (13 px type in the 18 px line) and no row
 /// grows (a 4 px taller tape lost the second open row at 1600x900).
 pub(crate) const TAPE_PAD_X: f32 = theme::SPACE_TIGHT;
+/// The most room between a name and a state word's chip (PAD, DIM, LOOP)
+/// on the tape: at `SPACE_TIGHT` the chip touched the name's last figure
+/// (the owner on #39: "AN1/2 PAD" looked crammed).
+pub(crate) const TAPE_CHIP_GAP: f32 = theme::SPACE_SM + theme::SPACE_TIGHT;
+
+/// The gap before `tag` on a one-line tape, at scale 1: a state chip takes
+/// what the tape has spare, up to `TAPE_CHIP_GAP`, so the room the fit
+/// counts (`fits_one_line`, at `SPACE_TIGHT`) never changes and no row
+/// re-lays ("Main 1/2" and DIM fit with half a pixel spare). A quiet type
+/// word keeps the tight gap.
+fn tag_gap(name: &str, tag: &str) -> f32 {
+    if !is_state_word(tag) {
+        return theme::SPACE_TIGHT;
+    }
+    let spare = header_room() - name_w(short_label(name), TAPE_NAME) - state_chip_w(tag);
+    spare.clamp(theme::SPACE_TIGHT, TAPE_CHIP_GAP)
+}
 pub(crate) const TAPE_PAD_Y: f32 = 0.0;
 
 /// The width of `name` in the tape's serif at `size`, a little over the
@@ -1137,7 +1154,7 @@ fn header_row<'a>(
     // centred.
     let content: Element<'a, Message> = if side_by_side {
         let mut header = row![name_text(advanced_text::Wrapping::None)]
-            .spacing(theme::SPACE_TIGHT * scale)
+            .spacing(tag.map_or(theme::SPACE_TIGHT, |t| tag_gap(name, t)) * scale)
             .align_y(iced::Alignment::Center);
         if let Some(tag) = tag {
             header = header.push(tag_text(tag));
@@ -2704,6 +2721,16 @@ fn full_strip<'a>(p: StripParams<'a>, w: f32) -> Element<'a, Message> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_state_chip_has_room_beside_the_name() {
+        // The owner on #39: "AN1/2 PAD" looked crammed at 2 px.
+        assert_eq!(tag_gap("AN1/2", "PAD"), TAPE_CHIP_GAP);
+        // "Main 1/2" and DIM keep fitting on one line: only spare room is used.
+        assert!(fits_one_line("Main 1/2", Some("DIM")));
+        assert!(tag_gap("Main 1/2", "DIM") >= theme::SPACE_TIGHT);
+        assert_eq!(tag_gap("AN1/2", "MIC"), theme::SPACE_TIGHT, "a quiet type word");
+    }
+
     use super::*;
 
     #[test]

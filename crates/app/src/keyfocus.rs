@@ -249,6 +249,7 @@ fn panel_item_words(item: PanelItem) -> (&'static str, &'static str) {
         PanelItem::Gain => ("Preamp gain, dB", "\u{2190} \u{2192} one dB a press, Esc leaves"),
         PanelItem::AutoSet => ("AutoSet", SWITCH),
         PanelItem::Dynamics => ("Dynamics", "Space opens it"),
+        PanelItem::RoomEq => ("Room EQ", "Space opens it"),
         PanelItem::Phantom => ("Phantom power (48V)", SWITCH),
         PanelItem::Pad => ("PAD, \u{2212}11 dB", SWITCH),
         PanelItem::An12 => ("AN1\u{2192}2: AN1 on both sides", SWITCH),
@@ -564,6 +565,8 @@ pub enum PanelItem {
     AutoSet,
     /// The door to the D panel (issue #27).
     Dynamics,
+    /// The door to Main's Room EQ (issue #29).
+    RoomEq,
     Phantom,
     Pad,
     An12,
@@ -769,6 +772,9 @@ pub fn panel_items(state: &TuxMix, cid: ChannelId) -> Vec<PanelItem> {
         }
         if state.device.can_output_eq(ch) {
             items.push(Eq);
+        }
+        if ch / 2 == state.control_room.assign.main {
+            items.push(RoomEq);
         }
         if crate::dynamics_panel::has_d(state, cid) {
             items.push(Dynamics);
@@ -1237,7 +1243,10 @@ pub fn press(state: &mut TuxMix) -> Option<Option<Message>> {
         KeyFocus::Counter(CounterItem::Level(_)) => Some(None),
         KeyFocus::Counter(CounterItem::FxAction) => Some(crate::fx::status_action(state)),
         KeyFocus::Counter(CounterItem::FxFaders) => Some(Some(Message::FaderFxToggle)),
-        KeyFocus::Counter(CounterItem::FxRec(unit)) => Some(Some(Message::SetRecordFx(unit, !crate::fx::rec_includes(state, unit)))),
+        KeyFocus::Counter(CounterItem::FxRec(unit)) => {
+            let on = !crate::fx::rec_includes(state, unit);
+            Some(Some(switched(on, Message::SetRecordFx(unit, on))))
+        }
         KeyFocus::Counter(CounterItem::FxOn(unit)) => Some(Some(Message::FxOn(unit, !crate::fx::is_on(state, unit)))),
         KeyFocus::Counter(CounterItem::FxType(_) | CounterItem::FxPreset(_) | CounterItem::FxKnob(..)) => Some(None),
         KeyFocus::Matrix(row, col) => {
@@ -1263,6 +1272,12 @@ pub fn let_go(state: &mut TuxMix) -> bool {
     }
 }
 
+/// A switch's press from the keyboard, heard as the click's is: On or
+/// Off (`Message::Switched`).
+fn switched(on: bool, message: Message) -> Message {
+    Message::Switched(on, Box::new(message))
+}
+
 fn press_panel(state: &mut TuxMix, cid: ChannelId, item: PanelItem) -> Option<Message> {
     use PanelItem::*;
     let p = crate::app::strip_params(state, cid, state.sel_out);
@@ -1271,43 +1286,55 @@ fn press_panel(state: &mut TuxMix, cid: ChannelId, item: PanelItem) -> Option<Me
         _ => None,
     };
     match item {
-        Stereo => Some(Message::StereoLinkChanged(cid, !p.stereo_linked)),
-        TrimGains => (!state.trim_all).then_some(Message::TrimStripToggle(cid)),
+        Stereo => Some(switched(!p.stereo_linked, Message::StereoLinkChanged(cid, !p.stereo_linked))),
+        TrimGains => (!state.trim_all).then(|| switched(!crate::app::trim_on(state, cid), Message::TrimStripToggle(cid))),
         FollowsTrim => {
             let ChannelId::Output(ch) = cid else { return None };
-            Some(Message::NoTrimToggle(crate::mixops::output_pair(state, ch)))
+            let pair = crate::mixops::output_pair(state, ch);
+            // The switch shows "Follows Trim Gains", on while not in the list.
+            Some(switched(state.no_trim_outputs.contains(&pair), Message::NoTrimToggle(pair)))
         }
         GetsTalkback => {
             let ChannelId::Output(ch) = cid else { return None };
             let pair = crate::mixops::output_pair(state, ch);
             let flagged = state.control_room.talkback_outputs.contains(&pair);
-            Some(Message::TalkbackOutputChanged(pair, !flagged))
+            Some(switched(!flagged, Message::TalkbackOutputChanged(pair, !flagged)))
         }
         Gain | FxReturn | FxSend => None,
         // Space puts Width back to +1.00 (as recorded), as Pitch's does 0.
         SrcWidth => (state.device.settings().source_width_of(cid) < 1.0).then_some(Message::SourceWidth(cid, 1.0)),
-        Phase => Some(Message::PhaseChanged(cid, !p.phase)),
+        Phase => Some(switched(!p.phase, Message::PhaseChanged(cid, !p.phase))),
         AutoSet => {
             let ChannelId::Input(idx) = cid else { return None };
-            Some(Message::SetAutoSet(idx, !crate::autoset::is_on(state, idx)))
+            let on = !crate::autoset::is_on(state, idx);
+            Some(switched(on, Message::SetAutoSet(idx, on)))
         }
         Dynamics => Some(Message::ToggleFlyout(cid, FlyoutKind::Dynamics)),
+        RoomEq => Some(Message::ToggleRoomEq),
         OutPhaseL | OutPhaseR => {
             let ChannelId::Output(ch) = cid else { return None };
             let (_, och, ..) = crate::app::output_phase_rows(state, ch).into_iter().find(|r| r.0 == item)?;
-            Some(Message::OutputPhaseSide(och, !state.device.settings().output_phase_of(och)))
+            let on = !state.device.settings().output_phase_of(och);
+            Some(switched(on, Message::OutputPhaseSide(och, on)))
         }
-        SrcMs => Some(Message::SourceMs(cid, !state.device.settings().source_ms_of(cid))),
+        SrcMs => {
+            let on = !state.device.settings().source_ms_of(cid);
+            Some(switched(on, Message::SourceMs(cid, on)))
+        }
         OutMs => {
             let ChannelId::Output(ch) = cid else { return None };
             let pair = crate::app::output_ms_pair(state, ch)?;
-            Some(Message::OutputMs(pair, !state.device.settings().output_ms_of(pair)))
+            let on = !state.device.settings().output_ms_of(pair);
+            Some(switched(on, Message::OutputMs(pair, on)))
         }
         Eq => Some(Message::ToggleFlyout(cid, FlyoutKind::Eq)),
         // Its two clicks stay two presses: the first arms it.
         Phantom => input.map(Message::PhantomPress),
-        Pad => input.map(|i| Message::Pad(i, !p.pad)),
-        An12 => Some(Message::An12Changed(!state.device.settings().an12)),
+        Pad => input.map(|i| switched(!p.pad, Message::Pad(i, !p.pad))),
+        An12 => {
+            let on = !state.device.settings().an12;
+            Some(switched(on, Message::An12Changed(on)))
+        }
         RefLevel => adjust_panel(state, item, 1),
         Sensitivity => input.map(|i| Message::Sensitivity(i, !p.sensitivity_plus4)),
         MicPreset => {

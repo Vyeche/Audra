@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Room EQ for your speakers** (Main's Settings → Room EQ): up to eight EQ bands, a delay and a level for each speaker, for what the computer plays to "Audra Main 1/2". Boosts are held to +6 dB at any frequency, and every change glides, switching off included. Your mic heard straight through the unit isn't tuned.
+- **Every switch ticks on and off**, by mouse or keyboard.
+- **A helper cat:** a grey tabby with its little speaker walks about the window, resting on the empty stretches (the top bar, the row headings) and never over the strips' controls. Drag it anywhere; poke it and it mews and says a tip you haven't found, or shows your badges. It blinks, sings along with your speakers, purrs when picked up. Switch it off on the View page or in Audra settings → App.
+- **Make it heard can be undone in place** (Reverb & Echo): once pressed, its key stays, lit, as **Turn it back down**, which lowers only what Make it heard turned up, even after other changes. With an open mic in the speakers, the move to the headphones still comes first.
+- **The top of the right-hand column no longer changes the sound in one click:** "Reverb not heard here · see how" opens Reverb & Echo, where the key is.
+- **Control Room heading:** "where you listen" by its name, and "listening keys" over the Dim/Recall column.
+- **Safer Undo with the effects:** a snapshot or Undo that brings an FX send back up fades the reverb in instead of bringing it in at once.
+- **Small fixes from your tests:** PAD's chip has room beside the name; "Where it plugs in" has one size of icon, lined up; "In recordings" says what you hear stays the same.
+- **README:** says which driver Audra's package is (babyface-pro-linux v0.2.2 with Audra's changes).
+
 ## 0.1.3 — early preview (2026-11-23)
 
 A Mixer that looks like Audra's own, safer workspaces, and a README that says what Audra adds.

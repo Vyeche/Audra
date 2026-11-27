@@ -1049,17 +1049,15 @@ pub(crate) fn fx_unheard(state: &TuxMix) -> Option<(Message, String, String)> {
     // An open mic's reverb in the speakers: said whatever mix is being
     // edited, in the simulation too (critique #110 A P2-1, P2-2: the row
     // read "Reverb not heard" while it played there).
-    if let Some(sp) = crate::fx::mic_reverb_hazard(state) {
+    if crate::fx::mic_reverb_hazard(state).is_some() {
         let has_phones = state.control_room.assign.phones_pairs().first().is_some();
         let verb = if has_phones { "move it to the headphones" } else { "take it out of the speakers" };
+        // Only opens the page, whose first key is the fix (the owner, issue
+        // #45: a row here that changed levels in one click felt scary).
         return Some((
-            Message::FxMakeHeard(sp),
-            crate::celebrate::no_orphan(&format!("Open mic\u{2019}s {} in your speakers \u{b7} {verb}", crate::fx::on_words(state))),
-            if has_phones {
-                "It can howl there: one press takes the speakers\u{2019} FX return down (and brings it up in your headphones). Undo takes it back".to_string()
-            } else {
-                "It can howl there: one press takes the speakers\u{2019} FX return down. Assign headphones to hear it there. Undo takes it back".to_string()
-            },
+            Message::SidebarTabOpen(Tab::Fx),
+            crate::celebrate::no_orphan(&format!("Open mic\u{2019}s {} in your speakers \u{b7} see what to do", crate::fx::on_words(state))),
+            format!("It can howl there. Opens Reverb & Echo, where one press will {verb}."),
         ));
     }
     // Only for a mix you listen on (critique #69 A 3).
@@ -1094,7 +1092,9 @@ pub(crate) fn fx_unheard(state: &TuxMix) -> Option<(Message, String, String)> {
     // A long mix name keeps the row to one line: "its FX" (critique #70
     // A 6).
     let mix_fx = if mix.chars().count() > 10 { "its FX".to_string() } else { format!("{mix}'s FX") };
-    let (press, verb, tip): (Message, String, String) = match block {
+    // The verb went with the row's own press (issue #45); the press still
+    // picks the hover's wording.
+    let (press, _, tip): (Message, String, String) = match block {
         // The send is what's down: said so (critique #70 A 2: "turn up Main
         // 1/2's FX" when that was already up).
         Block::NoSend => (Message::FxMakeHeard(pair), "turn up the FX send".into(), make_heard_tip_in(state, pair, block).into()),
@@ -1114,7 +1114,14 @@ pub(crate) fn fx_unheard(state: &TuxMix) -> Option<(Message, String, String)> {
         _ => (Message::SidebarTab(Tab::Fx), "see why".into(), "Open Reverb & Echo, which says what to do".into()),
     };
     let what = if fx == "FX" { "Effects" } else { fx };
-    let said = crate::celebrate::no_orphan(&format!("{what} not heard \u{b7} {verb}"));
+    // The row only tells, and opens the page that has the press (the
+    // owner, issue #45: it changed levels in one click while looking like
+    // "Fed by …", which only opens a map; "the feature here feel scary").
+    // Its hover says the row opens the page and what the page's key would
+    // do there, so it doesn't read as the row's own press (Opus's review).
+    let tip = if matches!(press, Message::SidebarTab(_)) { tip } else { format!("Opens Reverb & Echo. Its key there: {tip}") };
+    let press = Message::SidebarTabOpen(Tab::Fx);
+    let said = crate::celebrate::no_orphan(&format!("{what} not heard here \u{b7} see how"));
     // The reason in a few words, on its hover with what the press does;
     // in the simulation, that nothing will sound anyway (critique #70 A 4).
     let why = block_short_words(state, block, pair);
@@ -1473,8 +1480,9 @@ pub(crate) fn fx_sends_head(state: &TuxMix) -> (String, bool, bool) {
     let off = can && block == Some(Block::Off);
     let fixable = can && matches!(block, Some(Block::NoSend | Block::NoReturn | Block::NoSendNoReturn));
     // An open mic's reverb in the speakers, whatever mix is set: said here
-    // too, the row under it holds the press (critique #111 A P2-1: with the
-    // faders on FX sends and the page closed, nothing said it).
+    // too; the key beside Back holds the press (critique #111 A P2-1: with
+    // the faders on FX sends and the page closed, nothing said it; Fable's
+    // review of issue #45: the row under it only opens the page now).
     if crate::fx::mic_reverb_hazard(state).is_some() {
         return ("FX sends \u{00b7} open mic\u{2019}s reverb in your speakers".to_string(), false, false);
     }
@@ -1497,8 +1505,14 @@ pub(crate) fn fx_sends_head(state: &TuxMix) -> (String, bool, bool) {
 pub(crate) fn fx_sends_second(state: &TuxMix) -> Option<Message> {
     let pair = state.sel_out;
     let (_, fixable, off) = fx_sends_head(state);
-    if fixable {
+    if let Some(sp) = crate::fx::mic_reverb_hazard(state) {
+        // The open-mic warning's press as a labelled key here (Fable's
+        // review of issue #45: the row under it only opens the page now).
+        Some(Message::FxMakeHeard(sp))
+    } else if fixable {
         Some(Message::FxMakeHeard(pair))
+    } else if crate::fx::turn_down_offer(state) {
+        Some(Message::FxTurnBackDown)
     } else if off {
         Some(Message::FxOn(crate::fx::Unit::Reverb, true))
     } else if crate::fx::block_in(state, pair) == Some(crate::fx::Block::HeldByMute) {
@@ -1553,7 +1567,30 @@ fn fx_placard(state: &TuxMix, scale: f32) -> Element<'_, Message> {
     // send raised gave silence with no reason shown).
     let pair = state.sel_out;
     let (setting, fixable, off) = fx_sends_head(state);
-    let keys: Element<'_, Message> = if fixable {
+    let keys: Element<'_, Message> = if let Some(sp) = crate::fx::mic_reverb_hazard(state) {
+        // An open mic's reverb in the speakers: its press as a labelled key
+        // beside Back (Fable's review of issue #45: the row under it only
+        // opens the page now, and this placard had no press for it).
+        let phones = !state.control_room.assign.phones_pairs().is_empty();
+        row![
+            back,
+            hint_at(
+                ringed(button(text(if phones { "Move it to the headphones" } else { "Take it out of the speakers" }).size(theme::TEXT_SM * scale).font(theme::SANS_SEMI))
+                    .padding([theme::SPACE_TIGHT * scale, theme::SPACE_SM * scale])
+                    .style(theme::placard_button(true))
+                    .on_press(Message::FxMakeHeard(sp)), crate::keyfocus::CounterItem::FxSendsKey),
+                if phones {
+                    "It can howl there: takes the speakers\u{2019} FX return down and plays the reverb in your headphones instead (Undo takes it back)"
+                } else {
+                    "It can howl there: takes the speakers\u{2019} FX return down. Assign headphones to hear it there (Undo takes it back)"
+                },
+                scale,
+                iced::widget::tooltip::Position::Left,
+            ),
+        ]
+        .spacing(theme::SPACE_SM * scale)
+        .into()
+    } else if fixable {
         row![
             back,
             hint_at(
@@ -1562,6 +1599,23 @@ fn fx_placard(state: &TuxMix, scale: f32) -> Element<'_, Message> {
                     .style(theme::placard_button(true))
                     .on_press(Message::FxMakeHeard(pair)), crate::keyfocus::CounterItem::FxSendsKey),
                 crate::fx::block_in(state, pair).map_or("", |b| make_heard_tip_in(state, pair, b)),
+                scale,
+                iced::widget::tooltip::Position::Left,
+            ),
+        ]
+        .spacing(theme::SPACE_SM * scale)
+        .into()
+    } else if crate::fx::turn_down_offer(state) {
+        // Make it heard pressed: its key stays, lit, and turns it back
+        // down (the owner, issue #45).
+        row![
+            back,
+            hint_at(
+                ringed(button(text("Turn it back down").size(theme::TEXT_SM * scale).font(theme::SANS_SEMI))
+                    .padding([theme::SPACE_TIGHT * scale, theme::SPACE_SM * scale])
+                    .style(theme::key_button(true, 0.0, 0.0, theme::RADIUS_SM * scale))
+                    .on_press(Message::FxTurnBackDown), crate::keyfocus::CounterItem::FxSendsKey),
+                crate::fx::TURN_DOWN_TIP,
                 scale,
                 iced::widget::tooltip::Position::Left,
             ),
@@ -2205,7 +2259,7 @@ pub(crate) fn pages_float(_state: &TuxMix) -> bool {
 pub(crate) fn page_card_open(state: &TuxMix) -> Option<Tab> {
     // It steps aside while a dialog that opens in its place is up (the
     // device panel, Workspaces, Audra settings), and comes back after.
-    let dialog = state.show_settings || state.show_device_panel || state.show_workspaces;
+    let dialog = state.show_settings || state.show_device_panel || state.show_workspaces || state.show_room_eq;
     if pages_float(state) && state.sidebar_open && !dialog && state.page_card && page_inline(state).is_none() {
         state.sidebar_tab.filter(|&t| !(t == Tab::Snapshots && snapshots_listed(state)))
     } else {
@@ -3467,6 +3521,16 @@ fn options_panel(state: &TuxMix, scale: f32) -> Element<'_, Message> {
         scale,
     ));
 
+    // The helper cat, on or off from here too (Audra settings → App has
+    // the same switch; the owner, 2026-11-27: "also disable or enable the
+    // cat").
+    body = body.push(options_row_note(
+        "cat",
+        segmented_row("on", "off", state.helper_cat, Some(Message::SetHelperCat(true)), Some(Message::SetHelperCat(false)), scale),
+        "The cat that walks about the window. Drag it, or poke it for a tip.",
+        scale,
+    ));
+
     body = body.push(theme_picker(state, true, scale));
     body.into()
 }
@@ -4029,12 +4093,16 @@ mod tests {
         assert!(matches!(items[at - 1], CounterItem::OnlyThese | CounterItem::OpenMicExpand | CounterItem::OpenMicKeep), "{:?}", items[at - 1]);
         let (press, said, _) = super::fx_unheard(&state).unwrap();
         let plain = |w: &str| w.replace('\u{a0}', " ");
-        assert!(matches!(press, crate::app::Message::FxMakeHeard(_)) && plain(&said).contains("turn up Main 1/2's FX"), "{said}");
+        // It only tells and opens the page, never a level in one click (the
+        // owner, issue #45); the hover names what the page's key does.
+        let (_, _, tip) = super::fx_unheard(&state).unwrap();
+        assert!(matches!(press, crate::app::Message::SidebarTabOpen(super::Tab::Fx)) && plain(&said).contains("not heard here") && plain(&said).contains("see how"), "{said}");
+        assert!(tip.contains("Opens Reverb & Echo") && tip.contains("FX return"), "{tip}");
         // Only the send down: the send is named (critique #70 A 2).
         let main = state.control_room.assign.main;
         crate::fx::set_return(&mut state, main, crate::fx::db_vol(-12.0));
-        let (_, said, _) = super::fx_unheard(&state).unwrap();
-        assert!(plain(&said).contains("turn up the FX send"), "{said}");
+        let (_, _, tip) = super::fx_unheard(&state).unwrap();
+        assert!(tip.contains("FX send") && !tip.contains("return,"), "{tip}");
     }
 
     #[test]
@@ -4202,7 +4270,9 @@ mod tests {
         let (said, fixable, _) = super::fx_sends_head(&state);
         assert!(said.ends_with("Mute FX is on") && !fixable, "{said}");
         let (press, _, tip) = super::fx_unheard(&state).expect("the row on Main");
-        assert!(matches!(press, crate::app::Message::MuteFxToggle));
+        // Only opens the page (the owner, issue #45); its hover says what
+        // the page's key would do.
+        assert!(matches!(press, crate::app::Message::SidebarTabOpen(super::Tab::Fx)));
         // Critique #71 A 2: Release isn't promised to bring back the room.
         assert!(tip.contains("Nothing is sent to the effects yet") && !tip.contains("come back"), "{tip}");
         assert_eq!(crate::fx::block_past_mute(&state, main), Some(Block::NoSend));

@@ -1796,6 +1796,174 @@ fn make_it_heard_keeps_an_open_mics_reverb_out_of_the_speakers() {
     assert!(crate::fx::user_return(&state, phones) > 0.0 || state.fx_return_ramps.contains_key(&phones), "the headphones' return instead");
 }
 
+/// Make it heard pressed a while ago: its key acts (`fx::TURN_DOWN_ARM`).
+fn age_made_heard(state: &mut TuxMix) {
+    if let Some(m) = state.made_heard.as_mut() {
+        m.at = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(2)).unwrap_or(m.at);
+    }
+}
+
+/// Make it heard's key stays and turns back down what it turned up, and
+/// only that, only down (the owner, issue #45: "I think we need a way to
+/// toggle the change").
+#[test]
+fn make_it_heard_turns_back_down_what_it_turned_up() {
+    use crate::fx::{send_db, user_return, OFF_DB};
+    let mut state = state();
+    let main = state.control_room.assign.main;
+    state.sel_out = main;
+    let _ = update(&mut state, Message::FxOn(crate::fx::Unit::Reverb, true));
+    assert!(!crate::fx::turn_down_offer(&state), "nothing turned up yet");
+    let _ = update(&mut state, Message::FxMakeHeard(main));
+    app::settle_glides(&mut state);
+    for _ in 0..200 {
+        let _ = update(&mut state, Message::Tick);
+    }
+    assert!(send_db(&state) > OFF_DB && user_return(&state, main) > 0.0, "heard");
+    assert!(crate::fx::turn_down_offer(&state), "the key turns it back down now: {:?} {:?}", crate::fx::block_in(&state, main), crate::fx::made_heard_up(&state));
+    assert!(matches!(crate::fx::status_action(&state), Some(Message::FxTurnBackDown)), "the keyboard press too");
+    // Other changes in between don't take the way back (Undo would take
+    // back the last of them instead).
+    let _ = update(&mut state, Message::Gain(1, 6));
+    assert!(crate::fx::turn_down_offer(&state));
+    // At once under the same pointer (a double-click): nothing yet.
+    if let Some(m) = state.made_heard.as_mut() {
+        m.at = std::time::Instant::now();
+    }
+    let n = writes(&state).len();
+    let steps = state.undo_stack.len();
+    let _ = update(&mut state, Message::FxTurnBackDown);
+    assert_eq!(writes(&state).len(), n, "a double-click doesn't undo itself");
+    assert_eq!(state.undo_stack.len(), steps, "and opens no empty undo step");
+    let before = writes(&state).len();
+    age_made_heard(&mut state);
+    let _ = update(&mut state, Message::FxTurnBackDown);
+    assert!(send_db(&state) <= OFF_DB, "the send back down");
+    assert!(user_return(&state, main) <= 0.0, "the return back down");
+    assert!(state.fx_return_ramps.is_empty(), "down at once, nothing gliding up");
+    // Only the send and that return were written, both down.
+    for w in &writes(&state)[before..] {
+        let line = format!("{w:?}");
+        assert!(line.contains("FxSend") || line.contains("FxReturn"), "only the send and the return: {line}");
+    }
+    assert_eq!(state.device.inputs()[1].gain, Some(6), "the other change kept");
+    assert!(!crate::fx::turn_down_offer(&state), "back to Make it heard");
+    assert!(matches!(crate::fx::page_key_for_tests(&state), Some(("Make it heard", _))));
+    // A second press does nothing.
+    let n = writes(&state).len();
+    age_made_heard(&mut state);
+    let _ = update(&mut state, Message::FxTurnBackDown);
+    assert_eq!(writes(&state).len(), n, "nothing left to turn down");
+}
+
+/// Turning back down never brings an open mic's reverb into the speakers:
+/// moved to the headphones, only the headphones' return and the send come
+/// down, and the speakers' stays off; while it's in the speakers, or behind
+/// Mute FX, the move's key comes first (the owner, issue #45).
+#[test]
+fn turning_back_down_keeps_an_open_mics_reverb_out_of_the_speakers() {
+    use crate::fx::{send_db, user_return, OFF_DB};
+    let mut state = state();
+    let main = state.control_room.assign.main;
+    let phones = *state.control_room.assign.phones_pairs().first().expect("a Phones pair");
+    let _ = update(&mut state, Message::Gain(0, 30));
+    // The mic in the headphones' mix, so its send carries it.
+    let _ = state.device.set_volume(ChannelId::Input(0), phones, 0.7);
+    let _ = update(&mut state, Message::FxOn(crate::fx::Unit::Reverb, true));
+    state.sel_out = main;
+    let _ = update(&mut state, Message::FxMakeHeard(main));
+    app::settle_glides(&mut state);
+    for _ in 0..200 {
+        let _ = update(&mut state, Message::Tick);
+    }
+    assert!(user_return(&state, main) <= 0.0 && user_return(&state, phones) > 0.0, "moved to the headphones");
+    let m = crate::fx::made_heard_up(&state).expect("remembered");
+    assert_eq!((m.asked, m.pair), (main, phones));
+    // The speakers' page keeps its own key (to the headphones' mix), where
+    // the key turns it back down.
+    assert!(!crate::fx::turn_down_offer(&state), "the speakers' page keeps its key");
+    assert!(matches!(crate::fx::page_key_for_tests(&state), Some((l, Message::EditMix(p))) if l.starts_with("Edit the headphones") && p == phones));
+    state.sel_out = phones;
+    assert!(crate::fx::turn_down_offer(&state), "the headphones' page");
+    // The speakers' return turned up by hand: the hazard's key first, on
+    // the FX-sends placard as a labelled key too (Fable's review).
+    let _ = update(&mut state, Message::FxReturn(main, 10f32.powf(-1.5 / 20.0)));
+    assert!(crate::fx::mic_reverb_hazard(&state).is_some());
+    assert!(!crate::fx::turn_down_offer(&state), "the move first");
+    state.fader_fx = true;
+    assert!(matches!(crate::sidebar::fx_sends_second(&state), Some(Message::FxMakeHeard(p)) if p == main), "the placard's key moves it");
+    state.fader_fx = false;
+    // Behind Mute FX: still the move first.
+    let _ = update(&mut state, Message::MuteFxToggle);
+    assert!(crate::fx::mute_holds_mic_reverb(&state).is_some());
+    assert!(!crate::fx::turn_down_offer(&state), "the move first, behind Mute FX too");
+    let _ = update(&mut state, Message::FxMakeHeard(main));
+    let _ = update(&mut state, Message::MuteFxToggle);
+    app::settle_glides(&mut state);
+    for _ in 0..200 {
+        let _ = update(&mut state, Message::Tick);
+    }
+    assert!(crate::fx::turn_down_offer(&state));
+    age_made_heard(&mut state);
+    let _ = update(&mut state, Message::FxTurnBackDown);
+    assert!(user_return(&state, main) <= 0.0, "the speakers' return stays off");
+    assert!(user_return(&state, phones) <= 0.0 && send_db(&state) <= OFF_DB, "the headphones' return and the send down");
+}
+
+/// Another mix (a snapshot, Undo) and the key no longer speaks for its
+/// levels: Make it heard again (the owner, issue #45).
+#[test]
+fn another_mix_forgets_what_make_it_heard_turned_up() {
+    let mut state = state();
+    let main = state.control_room.assign.main;
+    state.sel_out = main;
+    let quiet = crate::control_room::capture_scene(&state);
+    let _ = update(&mut state, Message::FxOn(crate::fx::Unit::Reverb, true));
+    let _ = update(&mut state, Message::FxMakeHeard(main));
+    app::settle_glides(&mut state);
+    assert!(state.made_heard.is_some());
+    app::apply_mix_scene(&mut state, &quiet).unwrap();
+    assert!(state.made_heard.is_none() && !crate::fx::turn_down_offer(&state));
+}
+
+/// Undo of another change keeps Make it heard's way back; once its levels
+/// are down by hand, a send raised later isn't its to turn down; and a
+/// scene that raises the send brings the reverb in on the returns' glide
+/// (Fable's review of issue #45).
+#[test]
+fn make_it_heard_memory_survives_other_undos_and_forgets_hand_levels() {
+    use crate::fx::{send_db, user_return, OFF_DB};
+    let mut state = state();
+    let main = state.control_room.assign.main;
+    state.sel_out = main;
+    let _ = update(&mut state, Message::FxOn(crate::fx::Unit::Reverb, true));
+    let _ = update(&mut state, Message::FxMakeHeard(main));
+    app::settle_glides(&mut state);
+    let _ = update(&mut state, Message::Gain(1, 6));
+    let _ = update(&mut state, Message::Undo);
+    app::settle_glides(&mut state);
+    assert!(crate::fx::turn_down_offer(&state), "Undo of the gain keeps the way back");
+    // Turned back down, then Undo: the send comes back, and the reverb
+    // rises on the return's glide, not in one write.
+    age_made_heard(&mut state);
+    let _ = update(&mut state, Message::FxTurnBackDown);
+    assert!(send_db(&state) <= OFF_DB);
+    let _ = update(&mut state, Message::Undo);
+    assert!(send_db(&state) > OFF_DB, "Undo brings the send back");
+    let hw = |state: &TuxMix| state.device.settings().fx_return_of(main);
+    assert!(crate::fx::vol_db(hw(&state)) <= -59.0 && state.fx_return_ramps.contains_key(&main), "the return glides in from silence: {}", crate::fx::vol_db(hw(&state)));
+    app::settle_glides(&mut state);
+    // Down by hand, then the send raised by hand: not Make it heard's.
+    let _ = update(&mut state, Message::FxReturn(main, 0.0));
+    let _ = update(&mut state, Message::FxSend(OFF_DB));
+    let _ = update(&mut state, Message::Tick);
+    assert!(state.made_heard.is_none(), "forgotten once down");
+    let _ = update(&mut state, Message::FxSend(-12.0));
+    let _ = update(&mut state, Message::FxReturn(main, 0.5));
+    assert!(!crate::fx::turn_down_offer(&state), "hand levels aren't its to turn down");
+    assert!(user_return(&state, main) > 0.0);
+}
+
 /// Voice off after Stream-with-Voice puts the plain mic back in the mix to
 /// your apps, so the stream never goes voiceless (critique #108 A P2-1).
 #[test]

@@ -75,6 +75,9 @@ pub struct Prefs {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shimmers_shown: Vec<String>,
     pub tips_off: bool,
+    /// The helper cat switched off (Audra settings → App).
+    #[serde(default)]
+    pub helper_cat_off: bool,
     /// Milestones' cards and notes switched off on their own (the owner,
     /// 2026-11-14: "Silence milestones can be a seperate option"); before,
     /// Tips off took them too.
@@ -168,6 +171,9 @@ pub struct Prefs {
     pub dynamics_yours_extras: Option<(u8, u8, bool)>,
     /// Each output's D (issue #27), when any was ever opened.
     pub dynamics_outputs: Option<Vec<OutDynPref>>,
+    /// Room EQ for Main's speakers (issue #29), once anything was set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_eq: Option<audra_fx::room_eq::RoomEqParams>,
     /// The counter's open page ("snapshots", "fx", "groups", "layouts",
     /// "view"), or "none" with every page closed; absent, Snapshots.
     pub open_page: Option<String>,
@@ -500,6 +506,7 @@ mod tests {
             tips_shown: vec!["reset".into()],
             shimmers_shown: vec!["fold".into()],
             tips_off: true,
+            helper_cat_off: true,
             milestones_off: true,
             small_wins_off: true,
             plain_names_off: true,
@@ -537,6 +544,7 @@ mod tests {
             dynamics_yours: Some(audra_fx::DynamicsParams { threshold_db: -31.0, ..audra_fx::dynamics::presets()[0].1 }),
             dynamics_yours_extras: Some((1, 2, true)),
             dynamics_outputs: Some(vec![OutDynPref { output: 2, on: true, params: audra_fx::dynamics::output_presets()[0].1 }]),
+            room_eq: Some(audra_fx::room_eq::RoomEqParams { on: true, ..crate::room_eq::fresh() }),
             fx_presets: crate::fx::UserPresets {
                 reverb: vec![crate::fx::Named { name: "Booth".into(), params: audra_fx::ReverbParams { room_scale: 0.7, ..Default::default() } }],
                 echo: Vec::new(),

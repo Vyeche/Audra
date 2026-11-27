@@ -28,6 +28,7 @@ pub mod gain_ramp;
 mod filters;
 pub mod presets;
 pub mod reverb;
+pub mod room_eq;
 
 pub use chain::VoiceChain;
 pub use dynamics::{Dynamics, DynamicsParams};

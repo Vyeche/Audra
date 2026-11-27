@@ -16,8 +16,8 @@ Audra stands on two community projects by ismail-bahloul: the [`snd-usb-babyface
 
 - **Quick setup.** Three steps (your mic, its level, where you hear it) that tick off when they're right, then "What are you doing?": a podcast or call, a headphone mix, recording or streaming, each one press and one Undo.
 - **Safe by default.** A warning, with the one press that fixes it, when an open mic reaches the speakers. No level jumps up more than 6 dB at once, whether from a snapshot, Undo or a remote control. 48V and loopback switch on only with your own press, and the reverb stays out of the speakers.
-- **Learn as you go.** Plain names under the outputs (*your speakers*, *your headphones*), **What's this?** to see what the controls do as you point at them, a map of where each sound goes, and nine "How do I…" guides that tick off as you do them.
-- **A studio on the computer.** Reverb and Echo through the unit's FX send and return; Voice (presets such as Clear Calls, and noise removal) for what your call apps hear; one-press recording to WAV.
+- **Learn as you go.** Plain names under the outputs (*your speakers*, *your headphones*), **What's this?** to see what the controls do as you point at them, a map of where each sound goes, nine "How do I…" guides that tick off as you do them, and a little cat with its speaker who walks about the window: drag it, or poke it for a tip.
+- **A studio on the computer.** Reverb and Echo through the unit's FX send and return; Voice (presets such as Clear Calls, and noise removal) for what your call apps hear; Room EQ to tune your speakers to your room (eight bands, a delay and a level per speaker, boosts held to +6 dB); one-press recording to WAV.
 - **Feels like hardware.** Turned knobs, metal fader caps, LED meters and ten colour themes, with small sounds and celebrations for real firsts (each can be switched off).
 
 ## Early preview
@@ -48,12 +48,11 @@ sudo apt install dkms linux-headers-$(uname -r)
 sudo apt install ./audra_*.deb ./snd-usb-babyface-pro-dkms_*.deb
 ```
 
-Or build them yourself from the checkout:
+Or build them yourself from the checkout, in one step:
 
 ```sh
 sudo apt install dkms linux-headers-$(uname -r)
-packaging/build-deb.sh
-sudo apt install ./target/debian/audra_*.deb ./target/debian/snd-usb-babyface-pro-dkms_*.deb
+./install.sh
 ```
 
 Replug the interface (or reboot), turn your speakers and headphones down, and open **Audra** from the app launcher.
@@ -129,14 +128,13 @@ The [wiki](https://github.com/Vyeche/Audra/wiki) explains how to use each part. 
 
 ## Install from packages (Pop!_OS, Ubuntu)
 
-Two `.deb` packages: Audra itself, and the driver as a DKMS package that builds itself when installed and again for every new kernel. Build them from a checkout (the same build tools as below are needed), then install both:
+Two `.deb` packages: Audra itself, and the driver as a DKMS package that builds itself when installed and again for every new kernel. From a checkout (the same build tools as below are needed), one script builds both and installs them:
 
 ```sh
-packaging/build-deb.sh
-sudo apt install ./target/debian/audra_*.deb ./target/debian/snd-usb-babyface-pro-dkms_*.deb
+./install.sh
 ```
 
-Audra then appears in the app launcher. Unplug and plug in the interface (or reboot) to load the driver. To update, pull, run the script again and install the new packages. To remove: `sudo apt remove audra snd-usb-babyface-pro-dkms`. A driver installed by hand with the DKMS commands below is taken over by the package.
+It always puts on the newest Audra, even over a copy with the same version number. It adds the driver package only when no Babyface driver is installed yet, and keeps one that's already there. Audra then appears in the app launcher. After a first driver install, unplug and plug in the interface (or reboot) to load the driver. To update, pull and run `./install.sh` again. (`packaging/build-deb.sh` alone only builds the packages into `target/debian/`.) To remove: `sudo apt remove audra snd-usb-babyface-pro-dkms`. A driver installed by hand with the DKMS commands below is taken over by the package.
 
 The steps below do the same by hand.
 
