@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.4 — early preview (2026-11-27)
+
+Room EQ for your speakers, a helper cat that walks about the window, and fixes from your tests.
+
 - **Room EQ for your speakers** (Main's Settings → Room EQ): up to eight EQ bands, a delay and a level for each speaker, for what the computer plays to "Audra Main 1/2". Boosts are held to +6 dB at any frequency, and every change glides, switching off included. Your mic heard straight through the unit isn't tuned.
 - **Every switch ticks on and off**, by mouse or keyboard.
 - **A helper cat:** a grey tabby with its little speaker walks about the window, resting on the empty stretches (the top bar, the row headings) and never over the strips' controls. Drag it anywhere; poke it and it mews and says a tip you haven't found, or shows your badges. It blinks, sings along with your speakers, purrs when picked up. Switch it off on the View page or in Audra settings → App.
